@@ -503,7 +503,7 @@
         else if (action === 'ok') activate();
         else if (action === 'left' || action === 'right' || action === 'up' || action === 'down') move(action);
         else media(action);
-      }, 30);
+      }, 90);
     }
     function onKey(event) {
       if (event.__cbwsSynthetic || event.__cbwsHandled) return;
