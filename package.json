@@ -1,6 +1,6 @@
 {
   "name": "cineby-ws-tv",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "private": true,
   "appName": "Cineby WS TV",
   "description": "TV-style browsing and remote control adapter for cineby.ws on Samsung TizenBrew",

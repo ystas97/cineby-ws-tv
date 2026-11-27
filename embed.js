@@ -38,10 +38,12 @@
   // Pop-up and redirect guard, like a browser's pop-up blocker. Ad scripts
   // in player pages open a new window (or follow a link out) on any click;
   // on the TV that replaces the whole screen. The player keeps working; only
-  // windows and links that leave it are stopped. Shared with tv.js.
+  // windows and links that leave it are stopped. Ad scripts also borrow
+  // window.open from a fresh hidden iframe, so every same-site child frame
+  // gets the guard as soon as it is inserted or its window is touched.
+  // Shared with tv.js (kept identical; see test/popup.test.cjs).
   function installPopupGuard(win, doc, allowed, onBlock) {
     if (win.__cbwsPopupGuard) return;
-    win.__cbwsPopupGuard = true;
     function report(url) { try { if (onBlock) onBlock(String(url || '')); } catch (ignore) {} }
     function fakeWindow() {
       var noop = function () {};
@@ -54,8 +56,6 @@
       return w;
     }
     function blockedOpen(url) { report(url); return fakeWindow(); }
-    try { Object.defineProperty(win, 'open', {value: blockedOpen, writable: false, configurable: false}); }
-    catch (err) { try { win.open = blockedOpen; } catch (ignore) {} }
     function leaves(el) {
       if (!el || !el.getAttribute) return false;
       var href = el.getAttribute(el.tagName === 'FORM' ? 'action' : 'href');
@@ -63,37 +63,108 @@
       if (target && target !== '_self') return true;
       if (!href || /^\s*(#|javascript:)/i.test(href)) return false;
       var url;
-      try { url = new win.URL(href, doc.baseURI || win.location.href); } catch (ignore) { return false; }
+      try { url = new win.URL(href, (el.ownerDocument && el.ownerDocument.baseURI) || doc.baseURI || win.location.href); } catch (ignore) { return false; }
       if (!/^https?:$/.test(url.protocol)) return false;
       return !allowed(url);
     }
-    doc.addEventListener('click', function (event) {
-      var t = event.target, a = t && t.closest ? t.closest('a[href],area[href]') : null;
-      if (a && leaves(a)) { event.preventDefault(); report(a.href); }
-    }, true);
-    doc.addEventListener('submit', function (event) {
-      if (leaves(event.target)) { event.preventDefault(); report(event.target.action); }
-    }, true);
-    var A = win.HTMLAnchorElement && win.HTMLAnchorElement.prototype;
-    if (A && A.click) {
-      var anchorClick = A.click;
-      A.click = function () { if (leaves(this)) { report(this.href); return; } return anchorClick.apply(this, arguments); };
+    function detached(el) {
+      var d = el.ownerDocument;
+      return !d || !d.documentElement || !d.documentElement.contains(el);
     }
-    var F = win.HTMLFormElement && win.HTMLFormElement.prototype;
-    if (F && F.submit) {
-      var formSubmit = F.submit;
-      F.submit = function () { if (leaves(this)) { report(this.action); return; } return formSubmit.apply(this, arguments); };
+    var frameGetter = null;
+    function childWindow(frame) {
+      try { return frameGetter ? frameGetter.call(frame) : frame.contentWindow; } catch (ignore) { return null; }
     }
-    // A click dispatched on a link that is not in the page still navigates.
-    var E = win.EventTarget && win.EventTarget.prototype;
-    if (E && E.dispatchEvent) {
-      var dispatch = E.dispatchEvent;
-      E.dispatchEvent = function (event) {
-        if (event && event.type === 'click' && this && this.tagName === 'A' && !doc.documentElement.contains(this) && leaves(this)) {
-          report(this.href); return false;
-        }
-        return dispatch.apply(this, arguments);
+    function guardFrames(node) {
+      if (!node || node.nodeType !== 1) return;
+      var list = node.tagName === 'IFRAME' || node.tagName === 'FRAME' ? [node] : [];
+      if (node.getElementsByTagName) {
+        var inner = node.getElementsByTagName('iframe');
+        for (var i = 0; i < inner.length; i++) list.push(inner[i]);
+      }
+      for (var j = 0; j < list.length; j++) guardRealm(childWindow(list[j]));
+    }
+    function wrap(proto, name, make) {
+      if (!proto || typeof proto[name] !== 'function') return;
+      var original = proto[name];
+      try { proto[name] = make(original); } catch (ignore) {}
+    }
+    function guardRealm(w) {
+      if (!w) return;
+      try { if (w.__cbwsPopupGuard) return; w.__cbwsPopupGuard = true; } catch (ignore) { return; } // other site: not ours to touch
+      try { Object.defineProperty(w, 'open', {value: blockedOpen, writable: false, configurable: false}); }
+      catch (err) { try { w.open = blockedOpen; } catch (ignore) {} }
+      var H = w.HTMLElement && w.HTMLElement.prototype;
+      wrap(H, 'click', function (original) {
+        return function () {
+          if ((this.tagName === 'A' || this.tagName === 'AREA') && leaves(this)) { report(this.href); return; }
+          return original.apply(this, arguments);
+        };
+      });
+      var F = w.HTMLFormElement && w.HTMLFormElement.prototype;
+      var formWrap = function (original) {
+        return function () { if (leaves(this)) { report(this.action); return; } return original.apply(this, arguments); };
       };
+      wrap(F, 'submit', formWrap);
+      wrap(F, 'requestSubmit', formWrap);
+      // A click dispatched on a link that is not in the page still navigates.
+      wrap(w.EventTarget && w.EventTarget.prototype, 'dispatchEvent', function (original) {
+        return function (event) {
+          if (event && event.type === 'click' && this && this.tagName === 'A' && detached(this) && leaves(this)) { report(this.href); return false; }
+          return original.apply(this, arguments);
+        };
+      });
+      // Same-site child frames (about:blank helpers) get the guard too.
+      var I = w.HTMLIFrameElement && w.HTMLIFrameElement.prototype;
+      if (I && Object.getOwnPropertyDescriptor) {
+        var props = ['contentWindow', 'contentDocument'];
+        for (var p = 0; p < props.length; p++) (function (prop) {
+          var desc = Object.getOwnPropertyDescriptor(I, prop);
+          if (!desc || !desc.get || !desc.configurable) return;
+          if (prop === 'contentWindow' && !frameGetter) frameGetter = desc.get;
+          try {
+            Object.defineProperty(I, prop, {configurable: true, enumerable: desc.enumerable, get: function () {
+              var value = desc.get.call(this);
+              try { guardRealm(prop === 'contentWindow' ? value : value && value.defaultView); } catch (ignore) {}
+              return value;
+            }});
+          } catch (ignore) {}
+        })(props[p]);
+      }
+      var N = w.Node && w.Node.prototype, El = w.Element && w.Element.prototype;
+      var insertWrap = function (original) {
+        return function () {
+          var result = original.apply(this, arguments);
+          for (var a = 0; a < arguments.length; a++) guardFrames(arguments[a]);
+          return result;
+        };
+      };
+      wrap(N, 'appendChild', insertWrap);
+      wrap(N, 'insertBefore', insertWrap);
+      wrap(N, 'replaceChild', insertWrap);
+      wrap(El, 'append', insertWrap);
+      wrap(El, 'prepend', insertWrap);
+      wrap(El, 'after', insertWrap);
+      wrap(El, 'before', insertWrap);
+      wrap(El, 'replaceWith', insertWrap);
+      wrap(El, 'insertAdjacentElement', function (original) {
+        return function (where, el) { var r = original.apply(this, arguments); guardFrames(el); return r; };
+      });
+      var d = w.document;
+      if (d && d.addEventListener) {
+        d.addEventListener('click', function (event) {
+          var t = event.target, a = t && t.closest ? t.closest('a[href],area[href]') : null;
+          if (a && leaves(a)) { event.preventDefault(); report(a.href); }
+        }, true);
+        d.addEventListener('submit', function (event) {
+          if (leaves(event.target)) { event.preventDefault(); report(event.target.action); }
+        }, true);
+      }
+    }
+    guardRealm(win);
+    if (doc && doc.getElementsByTagName) {
+      var frames = doc.getElementsByTagName('iframe');
+      for (var f = 0; f < frames.length; f++) guardRealm(childWindow(frames[f]));
     }
   }
 
