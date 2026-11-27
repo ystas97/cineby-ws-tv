@@ -39,7 +39,9 @@ function pageFixture(options={}){
       const ds=all(this);
       if(q==='h2,a[href]')return ds.filter(n=>n.tagName==='H2'||(n.tagName==='A'&&n.href));
       if(q==='a[href]')return ds.filter(n=>n.tagName==='A'&&n.href);
-      if(q==='img')return ds.filter(n=>n.tagName==='IMG');
+      if(q==='img'||q==='img[alt]')return ds.filter(n=>n.tagName==='IMG'&&(q==='img'||n.hasAttribute('alt')));
+      if(q.indexOf('button,[role=')===0)return ds.filter(n=>n.tagName==='BUTTON'||n.getAttribute('role')==='button'||/play/.test(n.getAttribute('class')||''));
+      if(q.indexOf('[class*="play-button"]')===0)return ds.filter(n=>/play/.test(n.getAttribute('class')||''));
       if(q==='h1'||q==='p'||q==='video')return ds.filter(n=>n.tagName===q.toUpperCase());
       if(q==='h2,h3')return ds.filter(n=>n.tagName==='H2'||n.tagName==='H3');
       if(q==='video,iframe')return ds.filter(n=>n.tagName==='VIDEO'||n.tagName==='IFRAME');
@@ -62,21 +64,35 @@ function pageFixture(options={}){
   const main=body.appendChild(new Node('main'));
   function section(name,kind,titles){const h=main.appendChild(new Node('h2'));h.textContent=name;
     titles.forEach((t,i)=>{const a=main.appendChild(new Node('a'));a.href='/'+kind+'/title-'+i;a.textContent=(kind==='tv'?'TV ★ 8.1 S1 E1 ':'★ 7.8 ')+t+' 2026';if(options.backgroundOnly){const art=a.appendChild(new Node('div'));art.style.backgroundImage='url(https://example.invalid/bg-'+i+'.jpg)';}else{const image=a.appendChild(new Node('img'));image.setAttribute('alt',t);image.setAttribute('data-src','https://example.invalid/lazy-'+i+'.jpg');image.setAttribute('src','https://example.invalid/art-'+i+'.jpg');}});}
-  let play,mediaNode;
+  let play,mediaNode,previewControl;
   if(options.detail){
     const h=main.appendChild(new Node('h1'));h.textContent='Sample Film';
     const meta=main.appendChild(new Node('p'));meta.textContent='2026 1h 29m — A short sample synopsis about a fictional character who travels to a remote island.';
     const poster=main.appendChild(new Node('img'));poster.setAttribute('alt','Sample Film');poster.setAttribute('data-src','https://example.invalid/poster.jpg');
     const backdrop=main.appendChild(new Node('img'));backdrop.setAttribute('alt','Hero backdrop');backdrop.setAttribute('src','https://example.invalid/backdrop.jpg');backdrop.rect={left:400,top:0,right:1200,bottom:480,width:800,height:480};
     play=main.appendChild(new Node('button'));play.textContent='Play Now';
-    play.addEventListener('click',()=>{mediaNode=main.appendChild(new Node(options.iframe?'iframe':'video'));mediaNode.rect={left:20,top:220,right:1150,bottom:850,width:1130,height:630};mediaNode.paused=true;mediaNode.currentTime=0;mediaNode.duration=120;mediaNode.play=function(){this.paused=false;this.fire('play');};mediaNode.pause=function(){this.paused=true;this.fire('pause');};});
+    function createMedia(){
+      mediaNode=main.appendChild(new Node(options.iframe?'iframe':'video'));
+      mediaNode.rect={left:20,top:220,right:1150,bottom:850,width:1130,height:630};
+      mediaNode.paused=true;mediaNode.currentTime=0;mediaNode.duration=120;
+      mediaNode.play=function(){this.paused=false;this.fire('play');};mediaNode.pause=function(){this.paused=true;this.fire('pause');};
+    }
+    play.addEventListener('click',()=>{
+      if(!options.preview){createMedia();return;}
+      const wrapper=main.appendChild(new Node('div'));wrapper.rect={left:30,top:200,right:1250,bottom:900,width:1220,height:700};
+      const image=wrapper.appendChild(new Node('img'));image.setAttribute('alt','Play movie');image.rect=wrapper.rect;
+      previewControl=wrapper.appendChild(new Node('div'));previewControl.setAttribute('class','play-overlay');previewControl.rect={left:590,top:540,right:690,bottom:640,width:100,height:100};
+      previewControl.addEventListener('click',()=>{main.removeChild(wrapper);createMedia();});
+    });
+
   } else {
     section('New Movies','movie',['Nebula','Horizon','Solstice']);section('New TV Shows','tv',['North','Ocean','Awake']);
   }
   const context={window,document,setTimeout(fn,delay){timerQueue.set(++timerId,{fn,delay});return timerId;},clearTimeout(id){timerQueue.delete(id);},Date,console};
   vm.runInNewContext(source,context);
   function flush(){for(let i=0;i<8;i++){const next=[...timerQueue].find(([id,t])=>t.delay<=500);if(!next)break;timerQueue.delete(next[0]);next[1].fn();}}
-  return {document,main,input,play,flush,media:()=>mediaNode};
+  function key(value){for(const fn of document.listeners.keydown)fn({keyCode:typeof value==='number'?value:undefined,key:typeof value==='string'?value:undefined,preventDefault(){},stopPropagation(){}});}
+  return {document,main,input,play,flush,window,key,media:()=>mediaNode,preview:()=>previewControl};
 }
 test('browse shell builds six poster cards in two rails and preserves native content',()=>{
   const {document,main}=pageFixture();
@@ -136,15 +152,48 @@ test('title page builds cinematic details and uses the original Play button',()=
   assert.equal(document.getElementById('cbws-tv-player-ui'),null);
   assert.ok(!fixture.media().classList.contains('cbws-theatre-media'));
 });
-test('embedded player is resized without inspecting or replacing its content',()=>{
+test('external iframe remains in the native page and theatre is opt-in',()=>{
   const fixture=pageFixture({detail:true,iframe:true});
   const {document,main,flush}=fixture;
   document.getElementById('cbws-tv-screen').querySelector('.cbws-detail-actions').children[0].click();
   flush();
-  const hud=document.getElementById('cbws-tv-player-ui');
-  assert.ok(hud);
+  assert.equal(document.getElementById('cbws-tv-player-ui'),null);
   assert.ok(main.contains(fixture.media()));
-  assert.ok(hud.textContent.includes('This embedded player keeps its own playback controls.'));
+  const enlarge=document.getElementById('cbws-tv-player-toggle');
+  assert.ok(enlarge);enlarge.click();
+  const hud=document.getElementById('cbws-tv-player-ui');
+  assert.ok(hud);assert.ok(main.contains(fixture.media()));
+  assert.ok(hud.textContent.includes('Use the embedded player’s own controls.'));
+});
+test('Play Now moves the remote focus to the original large preview play control',()=>{
+  const fixture=pageFixture({detail:true,preview:true});
+  const {document,key}=fixture;
+  key(13);
+  assert.ok(fixture.preview());
+  assert.equal(document.activeElement,fixture.preview());
+  assert.ok(fixture.preview().classList.contains('cbws-tv-focus'));
+  assert.equal(fixture.media(),undefined);
+  key(13);
+  assert.ok(fixture.media());
+  assert.ok(document.getElementById('cbws-tv-player-ui'));
+});
+test('Samsung Return goes from the preview to title then from title to browse',()=>{
+  const fixture=pageFixture({detail:true,preview:true});
+  const {document,key,window}=fixture;
+  key(13);
+  assert.equal(document.getElementById('cbws-tv-screen'),null);
+  key(10009);assert.ok(document.getElementById('cbws-tv-screen'));
+  key(10009);assert.equal(window.location.href,'/home');
+});
+test('OK on a highlighted poster opens its exact normal title URL',()=>{
+  const {document,key,window}=pageFixture();
+  const card=document.getElementById('cbws-tv-screen').querySelector('.cbws-card');
+  assert.equal(document.activeElement,card);key(13);assert.equal(window.location.href,card.href);
+});
+test('Down on the first poster moves to the same position in the next shelf',()=>{
+  const {document,key}=pageFixture();
+  const cards=document.getElementById('cbws-tv-screen').querySelectorAll('.cbws-card');
+  key('ArrowDown');assert.equal(document.activeElement,cards[3]);
 });
 
 test('poster fallback recognizes CSS background artwork from the actual card',()=>{

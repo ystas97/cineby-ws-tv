@@ -32,8 +32,8 @@
 
   function keyAction(event) {
     var k = event.key, code = event.keyCode || event.which;
-    var map = {ArrowLeft:'left',Left:'left',ArrowUp:'up',Up:'up',ArrowRight:'right',Right:'right',ArrowDown:'down',Down:'down',Enter:'ok',NumpadEnter:'ok',Escape:'back',Backspace:'back',GoBack:'back',BrowserBack:'back',MediaPlayPause:'toggle',MediaPlay:'play',MediaPause:'pause',MediaStop:'stop',MediaFastForward:'forward',MediaRewind:'rewind'};
-    var codes = {37:'left',38:'up',39:'right',40:'down',13:'ok',27:'back',8:'back',461:'back',10009:'back',10252:'toggle',415:'play',19:'pause',413:'stop',417:'forward',412:'rewind'};
+    var map = {ArrowLeft:'left',Left:'left',ArrowUp:'up',Up:'up',ArrowRight:'right',Right:'right',ArrowDown:'down',Down:'down',Enter:'ok',NumpadEnter:'ok',OK:'ok',Select:'ok',Accept:'ok',' ':'ok',Spacebar:'ok',Escape:'back',Esc:'back',XF86Back:'back',Backspace:'back',GoBack:'back',BrowserBack:'back',MediaPlayPause:'toggle',MediaPlay:'play',MediaPause:'pause',MediaStop:'stop',MediaFastForward:'forward',MediaRewind:'rewind'};
+    var codes = {37:'left',38:'up',39:'right',40:'down',13:'ok',32:'ok',27:'back',8:'back',461:'back',10009:'back',10252:'toggle',415:'play',19:'pause',413:'stop',417:'forward',412:'rewind'};
     return (Object.prototype.hasOwnProperty.call(map,k) ? map[k] : null) ||
       (Object.prototype.hasOwnProperty.call(codes,code) ? codes[code] : null);
   }
@@ -70,7 +70,8 @@
     var root=null, suppressed='', mountedUrl='', refreshDelay=0, openModeButton=null;
     var layoutId='cbws-tv-screen';
     var artFrames=[],lastArtRefresh=0,artRefreshTimer=0,heroRefs=null;
-    var theatre=null,playerUI=null,playRequest=null,playerTimer=0,playerModeButton=null;
+    var theatre=null,playerUI=null,playRequest=null,playerTimer=0,playerModeButton=null,playSession=null;
+    var lastBrowse='',lastPicked='',lastFocusedCard=null;
     var nativeClass='cbws-native-tv';
     var CSS=[
       '#cbws-tv-screen{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;z-index:2147483000!important;background:#080e18!important;color:#f3f5fa!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;font-family:Arial,Helvetica,sans-serif!important;font-size:20px!important;line-height:1.4!important;margin:0!important;padding:0!important;text-align:left!important;}',
@@ -284,13 +285,14 @@
     }
     function unmount(){
       if(root && root.parentNode)root.parentNode.removeChild(root);
-      root=null;mountedUrl='';artFrames=[];heroRefs=null;
+      root=null;mountedUrl='';artFrames=[];heroRefs=null;lastFocusedCard=null;
       if(artRefreshTimer){clearTimeout(artRefreshTimer);artRefreshTimer=0;}
       clearFocus();
     }
     function showModeButton(){
       if(openModeButton && openModeButton.parentNode)return;
       openModeButton=button(document.body,'','TV view',function(){
+        if(isTitlePath(window.location.pathname)&&playSession){restoreDetail();return;}
         suppressed='';stopPlayerWait();removeModeButton();removePlayerModeButton();update();ensureActive();
       });
       openModeButton.id='cbws-tv-native-toggle';
@@ -373,6 +375,7 @@
       var a=link(parent,'cbws-card',null,card.path);
       a.setAttribute('aria-label',card.title);
       a._cbwsCard=card;
+      a.addEventListener('click',function(){rememberPick(card.path);});
       var poster=add(a,'div','cbws-poster');
       addImage(poster,card);
       if(card.rating)add(poster,'span','cbws-rating','★ '+card.rating);
@@ -451,6 +454,7 @@
       return {title:card.title,path:card.path,images:mergeImages(wide,card.images),artRole:'hero'};
     }
     function focusHero(el){
+      if(el&&el._cbwsCard)lastFocusedCard=el;
       if(!heroRefs||!el||!el._cbwsCard||heroRefs.path===el._cbwsCard.path)return;
       var card=el._cbwsCard;heroRefs.path=card.path;
       heroRefs.title.textContent=card.title;
@@ -470,7 +474,7 @@
     function addFooter(stage){
       var footer=add(stage,'footer','cbws-footer');
       add(footer,'span','','↑ ↓ ← →  Navigate     ·     OK  Select     ·     Back  Return');
-      add(footer,'span','','TV EDITION  1.2  /  CINEBY.WS');
+      add(footer,'span','','TV EDITION  1.3  /  CINEBY.WS');
     }
     function pageLinks(currentPath) {
       var out=[], seen={};
@@ -522,7 +526,7 @@
       document.body.appendChild(screen);
       root=screen;mountedUrl=window.location.href;
       clearFocus();
-      var first=screen.querySelector('.cbws-card');if(first)setActive(first,false);
+      restoreBrowseFocus(screen);
     }
     function nativeText(el){
       return el?String(el.innerText||el.textContent||'').replace(/\s+/g,' ').trim():'';
@@ -617,8 +621,7 @@
       }
     }
     function returnFromDetail(){
-      if(window.history && window.history.length>1)window.history.back();
-      else window.location.href='/home';
+      browseBack();
     }
     function renderDetail(detail){
       var p=window.location.pathname;
@@ -698,7 +701,7 @@
       if(theatre || playerModeButton&&playerModeButton.parentNode)return;
       var el=findPlayer();
       if(!el)return;
-      playerModeButton=button(document.body,'','TV player',function(){var player=findPlayer();if(player)startTheatre(player);});
+      playerModeButton=button(document.body,'',el.tagName==='VIDEO'?'TV player':'Enlarge player',function(){var player=findPlayer();if(player)startTheatre(player);});
       playerModeButton.id='cbws-tv-player-toggle';
     }
     function stopPlayerWait(){
@@ -706,26 +709,18 @@
       if(playerTimer){clearTimeout(playerTimer);playerTimer=0;}
     }
     function waitForPlayer(){
-      if(!playRequest)return;
+      if(!playRequest||playRequest.stage==='preview')return;
       if(window.location.pathname!==playRequest.path && !/\/(?:watch|play)\b/i.test(window.location.pathname)){stopPlayerWait();return;}
       if(Date.now()>playRequest.until){stopPlayerWait();offerPlayer();return;}
       if(!playerTimer)playerTimer=setTimeout(function(){playerTimer=0;update();},450);
     }
     function beginPlay(control){
-      var info=readDetail();
-      var title=info?info.card.title:(document.title||'Cineby TV');
-      playRequest={path:window.location.pathname,until:Date.now()+16000,title:title};
+      var info=readDetail(),title=info?info.card.title:(document.title||'Cineby TV');
+      playSession=window.location.pathname;
+      playRequest={path:window.location.pathname,until:Date.now()+18000,title:title,stage:'starting',preview:null};
       suppressed=window.location.href;unmount();showModeButton();
-      if(control&&typeof control.click==='function'){
-        try{control.click();}catch(ignore){}
-      }else{
-        var candidate=findPlayer();
-        if(candidate){startTheatre(candidate);return;}
-        var placeholder=document.querySelector('img[alt="Play episode"],img[alt="Play movie"],[aria-label="Play"]');
-        if(placeholder && isVisible(placeholder))try{placeholder.click();}catch(ignore){}
-        else hint('Select Play or a source on the original page');
-      }
-      waitForPlayer();offerPlayer();
+      if(control&&typeof control.click==='function')try{control.click();}catch(ignore){}
+      afterPlayRequest();
     }
     function fullscreenPlayer(el){
       var method=el.requestFullscreen||el.webkitRequestFullscreen||el.webkitRequestFullScreen;
@@ -764,10 +759,11 @@
       playerUI=element('div','');playerUI.id='cbws-tv-player-ui';
       var background=add(playerUI,'div','cbws-theatre-background');
       var top=add(playerUI,'div','cbws-player-top');
-      button(top,'cbws-player-button','←  Back',closeTheatre);
+      button(top,'cbws-player-button','←  Back',restoreDetail);
       add(top,'strong','cbws-player-title',title);
       add(top,'span','cbws-player-badge','CINEBY TV  /  PLAYER');
       var bottom=add(playerUI,'div','cbws-player-bottom');
+      var defaultPlayerFocus=null;
       if(el.tagName==='VIDEO'){
         var progress=add(bottom,'div','cbws-player-progress');
         var time=add(progress,'span','','0:00');
@@ -776,6 +772,7 @@
         var controls=add(bottom,'div','cbws-player-controls');
         button(controls,'cbws-player-button','↶ 10 s',function(){media('rewind');});
         var toggle=button(controls,'cbws-player-button cbws-player-primary','Play / Pause',function(){media('toggle');});
+        defaultPlayerFocus=toggle;
         button(controls,'cbws-player-button','10 s ↷',function(){media('forward');});
         button(controls,'cbws-player-button','Full screen',function(){fullscreenPlayer(el);});
         button(controls,'cbws-player-button','Site controls',closeTheatre);
@@ -790,13 +787,246 @@
         updateStatus();
       }else{
         var row=add(bottom,'div','cbws-player-controls');
-        button(row,'cbws-player-button cbws-player-primary','Player controls',function(){try{el.focus();}catch(ignore){}});
+        defaultPlayerFocus=button(row,'cbws-player-button cbws-player-primary','Player controls',function(){enterFrame(el);});
         button(row,'cbws-player-button','Full screen',function(){fullscreenPlayer(el);});
         button(row,'cbws-player-button','Original page',closeTheatre);
-        add(bottom,'p','cbws-player-note','This embedded player keeps its own playback controls.');
+        add(bottom,'p','cbws-player-note','Use the embedded player’s own controls. Back returns to the title.');
       }
       document.body.appendChild(playerUI);
-      clearFocus();ensureActive();
+      clearFocus();if(defaultPlayerFocus)setActive(defaultPlayerFocus,false);else ensureActive();
+    }
+
+
+    function closestClass(el,name){
+      while(el&&el!==document.body){
+        if(el.classList&&el.classList.contains(name))return el;
+        el=el.parentElement;
+      }
+      return null;
+    }
+    function readStored(key){
+      try{return window.sessionStorage&&window.sessionStorage.getItem('cbws-'+key)||'';}catch(ignore){return '';}
+    }
+    function writeStored(key,value){
+      try{if(window.sessionStorage)window.sessionStorage.setItem('cbws-'+key,value);}catch(ignore){}
+    }
+    function safeBrowseUrl(value){
+      if(!value)return '';
+      var a=document.createElement('a');a.href=value;
+      var path=routeOf(a);
+      return path&&isBrowsePath(path)?a.href:'';
+    }
+    function rememberPick(path){
+      if(!isBrowsePath(window.location.pathname))return;
+      lastBrowse=safeBrowseUrl(window.location.href)||'/home';
+      lastPicked=path||'';
+      writeStored('browse',lastBrowse);writeStored('picked',lastPicked);
+    }
+    function openLink(el){
+      if(!root||!root.contains(el)||el.tagName!=='A'||!routeOf(el))return false;
+      if(isTitlePath(routeOf(el)))rememberPick(el.href);
+      window.location.href=el.href;return true;
+    }
+    function browseBack(){
+      var target=safeBrowseUrl(lastBrowse||readStored('browse'))||'/home';
+      if(target===window.location.href)target='/home';
+      window.location.href=target;return true;
+    }
+    function restoreBrowseFocus(screen){
+      var cards=screen.querySelectorAll('.cbws-card'),preferred=lastPicked||readStored('picked'),saved=safeBrowseUrl(lastBrowse||readStored('browse'));
+      if(saved===window.location.href&&preferred){
+        for(var i=0;i<cards.length;i++)if(cards[i]._cbwsCard&&cards[i]._cbwsCard.path===preferred){setActive(cards[i],true);return;}
+      }
+      if(cards.length)setActive(cards[0],false);
+    }
+    function usable(nodes){
+      var out=[];for(var i=0;i<nodes.length;i++)if(isVisible(nodes[i]))out.push(nodes[i]);return out;
+    }
+    function firstAction(){
+      return root&&(root.querySelector('.cbws-primary')||root.querySelector('.cbws-card')||root.querySelector('a[href],button'));
+    }
+    function focusSide(){
+      var side=root&&(root.querySelector('.is-current')||root.querySelector('.cbws-brand'));
+      return side?setActive(side,true):false;
+    }
+    function indexOfNode(list,el){for(var i=0;i<list.length;i++)if(list[i]===el)return i;return -1;}
+    function moveLayout(direction,el){
+      if(!root||!root.contains(el))return false;
+      var side=closestClass(el,'cbws-masthead');
+      if(side){
+        var menu=usable(side.querySelectorAll('a[href],button')),idx=indexOfNode(menu,el);
+        if(direction==='up'||direction==='down'){
+          if(idx<0)idx=0;
+          var next=idx+(direction==='up'?-1:1);
+          if(next>=0&&next<menu.length)setActive(menu[next],true);
+          return true;
+        }
+        if(direction==='left')return true;
+        var target=lastFocusedCard&&root.contains(lastFocusedCard)?lastFocusedCard:firstAction();
+        if(target)setActive(target,true);return true;
+      }
+      if(el._cbwsCard){
+        var row=closestClass(el,'cbws-rail')||closestClass(el,'cbws-grid');
+        if(!row)return false;
+        var cards=usable(row.querySelectorAll('.cbws-card')),pos=indexOfNode(cards,el);
+        if(pos<0)return false;
+        var isRail=row.classList.contains('cbws-rail');
+        if(direction==='left'||direction==='right'){
+          var nextPos=pos+(direction==='left'?-1:1);
+          if(nextPos>=0&&nextPos<cards.length)setActive(cards[nextPos],true);
+          else if(direction==='left')focusSide();
+          return true;
+        }
+        if(isRail){
+          var rails=root.querySelectorAll('.cbws-rail'),index=indexOfNode(rails,row);
+          var otherIndex=index+(direction==='up'?-1:1);
+          if(otherIndex>=0&&otherIndex<rails.length){
+            var other=usable(rails[otherIndex].querySelectorAll('.cbws-card'));
+            if(other.length)setActive(other[Math.min(pos,other.length-1)],true);
+          }else if(direction==='up'){
+            var primary=firstAction();if(primary&&primary!==el)setActive(primary,true);
+          }
+          return true;
+        }
+        var from=el.getBoundingClientRect(),candidates=[];
+        for(var i=0;i<cards.length;i++)if(cards[i]!==el)candidates.push({element:cards[i],rect:cards[i].getBoundingClientRect()});
+        var best=pickNext(from,candidates,direction);
+        if(best)setActive(best.element,true);
+        else if(direction==='up'){var primaryGrid=root.querySelector('.cbws-chip');if(primaryGrid)setActive(primaryGrid,true);else focusSide();}
+        return true;
+      }
+      if(closestClass(el,'cbws-hero-buttons')||closestClass(el,'cbws-detail-actions')){
+        if(direction==='down'){
+          var card=lastFocusedCard&&root.contains(lastFocusedCard)?lastFocusedCard:root.querySelector('.cbws-card');
+          if(card)setActive(card,true);return true;
+        }
+        if(direction==='left'&&el===firstAction())return focusSide();
+      }
+      return false;
+    }
+    function restoreDetail(){
+      var player=findPlayer(),wasPlaying=!!playSession;
+      playSession=null;stopPlayerWait();
+      if(theatre)closeTheatre();
+      if(wasPlaying&&player&&player.tagName==='VIDEO'){try{player.pause();}catch(ignore){}}
+      // Leave an external frame through normal page navigation.
+      if(wasPlaying&&player&&player.tagName==='IFRAME'&&window.location.reload){window.location.reload();return true;}
+      suppressed='';removeModeButton();removePlayerModeButton();update();ensureActive();return true;
+    }
+    function navigateBack(){
+      if(theatre||(isTitlePath(window.location.pathname)&&(suppressed===window.location.href||playSession)))return restoreDetail();
+      stopPlayerWait();playSession=null;
+      if(suppressed===window.location.href){suppressed='';removeModeButton();removePlayerModeButton();update();ensureActive();return true;}
+      if(isTitlePath(window.location.pathname)||/\/(?:watch|play)\b/i.test(window.location.pathname))return browseBack();
+      if(isBrowsePath(window.location.pathname)&&window.location.pathname!=='/'&&window.location.pathname!=='/home'){window.location.href='/home';return true;}
+      return false;
+    }
+
+    function playLabel(el){
+      return nativeText(el)||el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('alt')||'';
+    }
+    function previewContext(el){
+      var labels=(el.getAttribute('class')||'')+' '+(el.getAttribute('id')||'')+' '+(el.getAttribute('aria-label')||'')+' '+(el.getAttribute('title')||'')+' '+(el.getAttribute('alt')||'');
+      return /big[-_ ]?play|play[-_ ]?(?:button|btn|icon|overlay|movie|episode|video)|player[-_ ]?(?:placeholder|poster|preview)|watch[-_ ]?(?:placeholder|poster|preview)/i.test(labels);
+    }
+    function findPreviewPlay(){
+      if(!isTitlePath(window.location.pathname))return null;
+      var images=document.querySelectorAll('img[alt]'),bestImage=null,bestArea=0;
+      for(var i=0;i<images.length;i++){
+        var img=images[i],alt=img.getAttribute('alt')||'';
+        if(root&&root.contains(img)||!/^play(?:\s|$)/i.test(alt)||!isVisible(img))continue;
+        var r=img.getBoundingClientRect(),area=r.width*r.height;
+        if(r.width>=240&&r.height>=125&&area>bestArea){bestArea=area;bestImage=img;}
+      }
+      if(bestImage){
+        var parent=bestImage.parentElement;
+        for(var level=0;parent&&parent!==document.body&&level<3;level++,parent=parent.parentElement){
+          var candidates=parent.querySelectorAll('button,[role="button"],a[href],[aria-label],[title],[onclick],[class*="play-btn"],[class*="play-button"],[class*="play-icon"],[class*="play-overlay"],[class*="big-play"],[data-action="play"]');
+          var centre=bestImage.getBoundingClientRect(),bestButton=null,bestScore=Infinity;
+          for(var n=0;n<candidates.length;n++){
+            var candidate=candidates[n],label=playLabel(candidate);
+            if(candidate===bestImage||!isVisible(candidate)||/^play now|^play s\d+|^trailer/i.test(label))continue;
+            var rect=candidate.getBoundingClientRect(),x=(rect.left+rect.right)/2,y=(rect.top+rect.bottom)/2;
+            var cx=(centre.left+centre.right)/2,cy=(centre.top+centre.bottom)/2;
+            var near=Math.abs(x-cx)<centre.width*.28&&Math.abs(y-cy)<centre.height*.28;
+            var pointer=false;try{pointer=window.getComputedStyle(candidate).cursor==='pointer';}catch(ignore){}
+            if(/^(?:▶\s*)?play(?:\s+(?:video|movie|episode))?$/i.test(label)||previewContext(candidate)||(near&&pointer)){
+              var score=Math.abs(x-cx)+Math.abs(y-cy)+Math.abs(rect.width-95)*.2+Math.abs(rect.height-95)*.2;
+              if(score<bestScore){bestScore=score;bestButton=candidate;}
+            }
+          }
+          if(bestButton)return bestButton;
+          if(parent.getAttribute('onclick')||parent.getAttribute('role')==='button'||previewContext(parent))return parent;
+        }
+        return bestImage;
+      }
+      var list=document.querySelectorAll('[class*="play-button"],[class*="play-btn"],[class*="play-overlay"],[class*="player-placeholder"],[aria-label="Play video"],[aria-label="Play movie"],[aria-label="Play episode"],[title="Play video"]');
+      for(var j=0;j<list.length;j++){
+        var el=list[j];
+        if(root&&root.contains(el)||playerUI&&playerUI.contains(el)||!isVisible(el))continue;
+        var label2=playLabel(el);if(/^play now|^play s\d+|^trailer/i.test(label2))continue;
+        var box=el.getBoundingClientRect(),container=el.parentElement,large=false;
+        for(var k=0;container&&container!==document.body&&k<3;k++,container=container.parentElement){
+          var b=container.getBoundingClientRect();if(b.width>=window.innerWidth*.45&&b.height>=window.innerHeight*.23){large=true;break;}
+        }
+        if(large&&box.width>=18&&box.height>=18)return el;
+      }
+      return null;
+    }
+    function selectPreview(preview){
+      if(!preview)return false;
+      preview._cbwsPreview=true;preview.setAttribute('tabindex','0');
+      if(playRequest){playRequest.stage='preview';playRequest.preview=preview;}
+      if(playerTimer){clearTimeout(playerTimer);playerTimer=0;}
+      setActive(preview,true);hint('OK  ·  Start video');return true;
+    }
+    function previewActivated(el){
+      if(!el||!el._cbwsPreview)return false;
+      if(!playRequest)playRequest={path:window.location.pathname,title:document.title||'Cineby TV'};
+      playSession=window.location.pathname;playRequest.stage='loading';playRequest.until=Date.now()+18000;
+      try{el.click();}catch(ignore){}
+      afterPlayRequest();return true;
+    }
+    function enterFrame(frame){
+      // Let the browser handle its own frame focus; no cross-origin access.
+      try{frame.focus();}catch(ignore){}
+      hint('Use the player’s own controls · Back returns to the page');
+    }
+    function focusEmbeddedPlayer(frame){
+      stopPlayerWait();offerPlayer();setActive(frame,true);hint('OK  ·  Enter video player');
+    }
+    function afterPlayRequest(){
+      if(!playRequest)return;
+      if(playRequest.stage!=='loading'){
+        var preview=findPreviewPlay();
+        if(preview){if(playRequest.stage!=='preview'||playRequest.preview!==preview)selectPreview(preview);return;}
+      }
+      var player=findPlayer();
+      if(player){
+        if(player.tagName==='VIDEO')startTheatre(player);else focusEmbeddedPlayer(player);
+        return;
+      }
+      waitForPlayer();
+    }
+    function beginNativePlay(el){
+      if(!isTitlePath(window.location.pathname)||root||playerUI||!el)return false;
+      if(el._cbwsPreview)return previewActivated(el);
+      var nativePreview=findPreviewPlay();
+      if(nativePreview&&(el===nativePreview||nativePreview.contains(el)||el.contains(nativePreview))){el._cbwsPreview=true;return previewActivated(el);}
+      var label=playLabel(el);
+      if(/^(?:▶\s*)?(?:play now|play s\d+\s*e\d+|watch now|continue watching|latest s\d+\s*e\d+)$/i.test(label)){beginPlay(el);return true;}
+      return false;
+    }
+    function observeNativePlayClick(target){
+      if(!target||root||playerUI||playRequest||!isTitlePath(window.location.pathname))return;
+      var el=target;
+      for(var i=0;el&&el!==document.body&&i<4;i++,el=el.parentElement){
+        if(/^(?:▶\s*)?(?:play now|play s\d+\s*e\d+|watch now|continue watching)$/i.test(playLabel(el))){
+          playSession=window.location.pathname;suppressed=window.location.href;
+          playRequest={path:window.location.pathname,until:Date.now()+18000,title:document.title||'Cineby TV',stage:'starting',preview:null};
+          setTimeout(afterPlayRequest,100);return;
+        }
+      }
     }
 
     function update(){
@@ -817,9 +1047,7 @@
         var canWait=window.location.pathname===playRequest.path || /\/(?:watch|play)\b/i.test(window.location.pathname);
         if(canWait){
           suppressed=href;
-          var mediaEl=findPlayer();
-          if(mediaEl){startTheatre(mediaEl);return;}
-          waitForPlayer();showModeButton();return;
+          afterPlayRequest();if(!theatre)showModeButton();return;
         }else stopPlayerWait();
       }
       if(suppressed && suppressed!==href){suppressed='';removeModeButton();removePlayerModeButton();}
@@ -837,7 +1065,7 @@
       render(groups);
     }
     function getRoot(){return playerUI&&playerUI.parentNode?playerUI:root&&root.parentNode?root:null;}
-    return {update:update,getRoot:getRoot,back:closeTheatre,focused:focusHero};
+    return {update:update,getRoot:getRoot,back:navigateBack,focused:focusHero,move:moveLayout,openLink:openLink,beginNativePlay:beginNativePlay,enterFrame:enterFrame,previewActivated:previewActivated,observeNativePlayClick:observeNativePlayClick};
 
   }
 
@@ -852,7 +1080,7 @@
   if (window.top !== window.self) return;
   window.__cinebyWsRemoteV1 = true;
 
-  var selector = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [tabindex]:not([tabindex="-1"]), iframe, video[controls]';
+  var selector = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [tabindex]:not([tabindex="-1"]), iframe, video, img[alt^="Play"], [onclick], [class*="play-btn"], [class*="play-button"], [class*="play-overlay"], [aria-label="Play video"], [title="Play video"]';
   var focusClass = 'cbws-tv-focus';
   var active = null;
   var nodes = [];
@@ -955,13 +1183,25 @@
   }
 
   function reveal(el) {
-    var rect = el.getBoundingClientRect();
-    if (rect.top >= 24 && rect.bottom <= window.innerHeight - 24 && rect.left >= 12 && rect.right <= window.innerWidth - 12) return;
-    // scrollIntoView handles page and any carousel containing this element.
-    try { el.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'}); }
-    catch (err) { try { el.scrollIntoView(false); } catch (ignore) {} }
+    var parent=el.parentElement,depth=0;
+    while(parent&&parent!==document.body&&depth++<15){
+      var css=window.getComputedStyle(parent),r=el.getBoundingClientRect(),b=parent.getBoundingClientRect();
+      if(parent.scrollWidth>parent.clientWidth+4&&/auto|scroll/.test(css.overflowX)){
+        if(r.left<b.left+12)parent.scrollLeft-=b.left+12-r.left;
+        else if(r.right>b.right-12)parent.scrollLeft+=r.right-b.right+12;
+      }
+      if(parent.scrollHeight>parent.clientHeight+4&&/auto|scroll/.test(css.overflowY)){
+        r=el.getBoundingClientRect();
+        if(r.top<b.top+16)parent.scrollTop-=b.top+16-r.top;
+        else if(r.bottom>b.bottom-16)parent.scrollTop+=r.bottom-b.bottom+16;
+      }
+      parent=parent.parentElement;
+    }
+    var rect=el.getBoundingClientRect();
+    if(rect.top>=20&&rect.bottom<=window.innerHeight-20&&rect.left>=8&&rect.right<=window.innerWidth-8)return;
+    try{el.scrollIntoView({block:'nearest',inline:'nearest',behavior:'auto'});}
+    catch(err){try{el.scrollIntoView(false);}catch(ignore){}}
   }
-
   function setActive(el, shouldScroll) {
     if (!isVisible(el)) return false;
     if (active && active !== el) active.classList.remove(focusClass);
@@ -1023,6 +1263,7 @@
 
   function move(direction) {
     if (!ensureActive()) { scrollFallback(direction); return; }
+    if(tvLayout.move(direction,active))return;
     var from = active.getBoundingClientRect(), list = currentNodes(), candidates = [];
     for (var i=0; i<list.length; i++) {
       var el = list[i];
@@ -1031,27 +1272,25 @@
       candidates.push({element:el,rect:rect});
     }
     var best = pickNext(from,candidates,direction);
-    if (best) setActive(best.element,true);
-    else scrollFallback(direction);
+    if(best)setActive(best.element,true);
+    else{
+      var index=list.indexOf(active),delta=(direction==='left'||direction==='up')?-1:1;
+      for(var f=index+delta;f>=0&&f<list.length;f+=delta){
+        if(isVisible(list[f])&&!list[f].contains(active)&&!active.contains(list[f])){setActive(list[f],true);return;}
+      }
+      scrollFallback(direction);
+    }
   }
 
   function activate() {
-    if (!ensureActive()) return;
-    if (isTextInput(active)) {
-      active.focus();
-      try { active.click(); } catch(ignore){}
-      return;
-    }
-    if (active.tagName === 'IFRAME') {
-      active.focus();
-      hint('Плеер во фрейме: управление зависит от источника');
-      return;
-    }
-    if (active.tagName === 'VIDEO') { media('toggle'); return; }
-    // Dispatch the existing site's ordinary click; no changes to restrictions.
-    if (typeof active.click === 'function') active.click();
+    if(!ensureActive())return;
+    if(tvLayout.openLink(active))return;
+    if(tvLayout.beginNativePlay(active))return;
+    if(isTextInput(active)){active.focus();try{active.click();}catch(ignore){}return;}
+    if(active.tagName==='IFRAME'){tvLayout.enterFrame(active);return;}
+    if(active.tagName==='VIDEO'){media('toggle');return;}
+    if(typeof active.click==='function')active.click();
   }
-
   function findVideo() {
     var list = document.querySelectorAll('video'), best = null, area = 0;
     for (var i=0;i<list.length;i++){
@@ -1083,50 +1322,42 @@
   }
 
   function onBack() {
-    var el = document.activeElement;
-    if (isTextInput(el) || el && el.tagName === 'IFRAME') {
-      el.blur();
-      // Move DOM focus back to the outer page while preserving visual focus.
-      if (active) ensureActive();
-      return true;
+    var el=document.activeElement;
+    if(document.fullscreenElement&&document.exitFullscreen){document.exitFullscreen();return true;}
+    if(document.webkitFullscreenElement&&document.webkitExitFullscreen){document.webkitExitFullscreen();return true;}
+    if(isTextInput(el)){try{el.blur();}catch(ignore){}if(active&&isVisible(active))setActive(active,false);return true;}
+    if(el&&el.tagName==='IFRAME'){
+      try{el.blur();}catch(ignore){}
+      if(tvLayout.back())return true;
+      if(active&&isVisible(active))setActive(active,false);return true;
     }
-    if (document.fullscreenElement && document.exitFullscreen) { document.exitFullscreen(); return true; }
-    if (document.webkitFullscreenElement && document.webkitExitFullscreen) {document.webkitExitFullscreen();return true;}
-    if(tvLayout.back())return true;
-    return false; // TizenBrew / the site keeps its normal Back behavior.
+    return tvLayout.back();
   }
-
+  function consumeKey(event){
+    try{event.__cbwsHandled=true;}catch(ignore){}
+    if(event.preventDefault)event.preventDefault();
+    if(event.stopImmediatePropagation)event.stopImmediatePropagation();else if(event.stopPropagation)event.stopPropagation();
+  }
   function onKey(event) {
-    var action = keyAction(event);
-    if (!action || event.defaultPrevented) return;
-    var el = document.activeElement;
-    var editing = isTextInput(el);
-    if (editing && action === 'back') {
-      // Backspace must continue to delete text in a search field.
-      if (event.key === 'Backspace' || event.keyCode === 8) return;
-      if (onBack()) { event.preventDefault();event.stopPropagation(); }
-      return;
+    if(event.__cbwsHandled)return;
+    var action=keyAction(event);
+    if(!action)return;
+    var el=document.activeElement,editing=isTextInput(el);
+    if(action==='back'){
+      if(editing&&(event.key==='Backspace'||event.keyCode===8))return;
+      if(onBack())consumeKey(event);return;
     }
-    if (editing && ['left','right','up','down','ok'].indexOf(action)!==-1) return;
-    if (el && el.tagName==='SELECT' && (action==='left'||action==='right'||action==='up'||action==='down'||action==='ok')) return;
-    if (el && el.tagName==='INPUT' && el.type==='range' && (action==='left'||action==='right')) return;
-    if (action === 'back') {
-      if (onBack()) {event.preventDefault();event.stopPropagation();}
-      return;
-    }
-    if (['toggle','play','pause','stop','forward','rewind'].indexOf(action)!==-1) {
-      if (media(action)) {event.preventDefault();event.stopPropagation();}
-      return;
-    }
-    if (action === 'ok') {
-      event.preventDefault();event.stopPropagation();activate();return;
-    }
-    if (Date.now()-lastDirection<70) {event.preventDefault();return;}
-    lastDirection=Date.now();
-    navigationMode=true;
-    event.preventDefault();event.stopPropagation();move(action);
+    // Do not intercept input when the user entered a native player frame.
+    if(el&&el.tagName==='IFRAME')return;
+    if(editing&&['left','right','up','down','ok'].indexOf(action)!==-1)return;
+    if(el&&el.tagName==='SELECT'&&['left','right','up','down','ok'].indexOf(action)!==-1)return;
+    if(el&&el.tagName==='INPUT'&&el.type==='range'&&(action==='left'||action==='right'))return;
+    if(event.defaultPrevented&&!tvLayout.getRoot())return;
+    if(['toggle','play','pause','stop','forward','rewind'].indexOf(action)!==-1){if(media(action))consumeKey(event);return;}
+    if(action==='ok'){consumeKey(event);activate();return;}
+    if(Date.now()-lastDirection<65){consumeKey(event);return;}
+    lastDirection=Date.now();navigationMode=true;consumeKey(event);move(action);
   }
-
   function onPointer(event) {
     navigationMode=false;
     var target=event.target;
@@ -1144,7 +1375,7 @@
     updateTimer=setTimeout(function(){
       updateTimer=0;
       var path=window.location.href;
-      if(path!==previousPath){
+      if(path.split('#')[0]!==previousPath.split('#')[0]){
         previousPath=path;
         if(active)active.classList.remove(focusClass);
         active=null;
@@ -1156,9 +1387,11 @@
 
   function start(){
     initStyle();
+    window.addEventListener('keydown',onKey,true);
     document.addEventListener('keydown',onKey,true);
     document.addEventListener('mousedown',onPointer,true);
     document.addEventListener('touchstart',onPointer,true);
+    document.addEventListener('click',function(event){tvLayout.observeNativePlayClick(event.target);},true);
     window.addEventListener('resize',scheduleRefresh);
     window.addEventListener('popstate',scheduleRefresh);
     window.addEventListener('hashchange',scheduleRefresh);
