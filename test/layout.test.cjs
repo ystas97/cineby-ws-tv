@@ -4,7 +4,7 @@ const {readFileSync}=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
 
-const source=readFileSync(path.join(__dirname,'../remote.js'),'utf8');
+const source=readFileSync(path.join(__dirname,'../tv.js'),'utf8');
 function pageFixture(options={}){
   let document;
   const all=(e)=>e.children.flatMap(c=>[c,...all(c)]);

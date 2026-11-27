@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {directionalScore,pickNext,keyAction,isTitlePath,isBrowsePath,cardText,sectionLabel}=require('../remote.js');
+const {directionalScore,pickNext,keyAction,isTitlePath,isBrowsePath,cardText,sectionLabel}=require('../tv.js');
 function rect(x,y,w=100,h=60){return{left:x,top:y,right:x+w,bottom:y+h};}
 test('direction selects same row before diagonal',()=>{
   const from=rect(100,100);
