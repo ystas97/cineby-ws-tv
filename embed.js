@@ -167,11 +167,66 @@
       active = null;
       return setActive(defaultTarget());
     }
+    // Players without accessible markup build menus from plain elements with
+    // a pointer cursor. Take the outermost such element as one choice.
+    function clickablesIn(root) {
+      if (!root || !root.querySelectorAll) return [];
+      var all = root.querySelectorAll('*'), out = [];
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        if (el.tagName === 'svg' || el.tagName === 'path' || el.namespaceURI === 'http://www.w3.org/2000/svg') continue;
+        var match = false;
+        try { match = el.matches ? el.matches(SELECTOR) : false; } catch (ignore) {}
+        if (!match) {
+          var css = window.getComputedStyle(el);
+          if (css.cursor !== 'pointer') continue;
+          var parent = el.parentElement;
+          if (parent && parent !== root && window.getComputedStyle(parent).cursor === 'pointer') continue;
+        }
+        if (!isVisible(el)) continue;
+        var nested = false;
+        for (var j = 0; j < out.length; j++) if (out[j].contains(el)) { nested = true; break; }
+        if (!nested) out.push(el);
+      }
+      return out;
+    }
+    function commonAncestor(list) {
+      var node = list[0];
+      while (node) {
+        var all = true;
+        for (var i = 1; i < list.length; i++) if (!node.contains(list[i])) { all = false; break; }
+        if (all) return node;
+        node = node.parentElement;
+      }
+      return document.body;
+    }
+    function preferred(list) {
+      for (var i = 0; i < list.length; i++) {
+        var el = list[i];
+        if (el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true' ||
+            /\b(active|selected|checked|current)\b/i.test(String(el.className))) return el;
+      }
+      return list[0];
+    }
+    // A popup opened by OK that has no menu markup: {root, opener}.
+    var popup = null;
+    function popupItems() {
+      if (!popup || !document.documentElement.contains(popup.root)) return [];
+      var items = clickablesIn(popup.root);
+      return items.length >= 2 ? items : [];
+    }
+    function inPopup(el) {
+      return !!(popup && el && popup.root.contains(el) && el !== popup.root && popupItems().length);
+    }
     function move(direction) {
       if (!ensureActive()) return;
-      var menu = openMenu(active);
-      var pool = candidates(menu);
-      if (menu && pool.length < 2) pool = candidates(null);
+      var pool;
+      if (inPopup(active)) pool = popupItems();
+      else {
+        var menu = openMenu(active);
+        pool = candidates(menu);
+        if (menu && pool.length < 2) pool = candidates(null);
+      }
       var from = active.getBoundingClientRect(), best = null, score = Infinity;
       for (var i = 0; i < pool.length; i++) {
         if (pool[i] === active || pool[i].contains(active) || active.contains(pool[i])) continue;
@@ -184,16 +239,35 @@
       if (!ensureActive()) { media('toggle'); return; }
       if (active.tagName === 'IFRAME') { try { active.focus(); } catch (ignore) {} return; }
       if (active.tagName === 'VIDEO') { media('toggle'); return; }
-      var before = visibleMenu(), el = active;
+      var el = active, before = visibleMenu(), wasInPopup = inPopup(el);
+      var known = clickablesIn(document.body);
       press(el);
       // Follow a menu that just opened (Settings → Quality → 720p …).
       window.setTimeout(function () {
         var after = visibleMenu();
         if (after && after !== before) {
           if (!openMenu(el)) opener = el;
+          popup = null;
           var first = defaultTarget();
           if (first) setActive(first);
-        } else if (!isVisible(el)) {
+          return;
+        }
+        var now = clickablesIn(document.body), fresh = [];
+        for (var i = 0; i < now.length; i++) if (known.indexOf(now[i]) < 0 && now[i] !== el) fresh.push(now[i]);
+        if (fresh.length >= 2) {
+          popup = {root: commonAncestor(fresh), opener: wasInPopup && popup ? popup.opener : el};
+          setActive(preferred(popupItems().length ? popupItems() : fresh));
+          return;
+        }
+        if (wasInPopup && !popupItems().length) {
+          // A choice closed its popup (e.g. subtitles picked).
+          var back = popup.opener; popup = null;
+          if (el.classList) el.classList.remove(FOCUS);
+          active = null;
+          if (back && isVisible(back)) setActive(back); else ensureActive();
+          return;
+        }
+        if (!isVisible(el)) {
           // The choice closed its menu (e.g. a quality was picked): go back
           // to the button that opened it.
           if (el.classList) el.classList.remove(FOCUS);
@@ -201,15 +275,18 @@
           if (!visibleMenu() && opener && isVisible(opener)) { setActive(opener); opener = null; }
           else ensureActive();
         }
-      }, 80);
+      }, 120);
     }
-    function closeMenu(menu) {
+    function sendEscape() {
       var target = active || document.activeElement || document.body;
       try {
         var esc = new window.KeyboardEvent('keydown', {key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true});
         esc.__cbwsSynthetic = true;
         target.dispatchEvent(esc);
       } catch (ignore) {}
+    }
+    function closeMenu(menu) {
+      sendEscape();
       window.setTimeout(function () {
         if (isVisible(menu) && opener && isVisible(opener)) press(opener);
         if (opener && isVisible(opener)) setActive(opener);
@@ -217,7 +294,20 @@
         if (!visibleMenu()) opener = null;
       }, 60);
     }
+    function closePopup() {
+      var p = popup;
+      sendEscape();
+      window.setTimeout(function () {
+        if (popupItems().length && p.opener && isVisible(p.opener)) press(p.opener);
+        popup = null;
+        if (active && active.classList) active.classList.remove(FOCUS);
+        active = null;
+        if (p.opener && isVisible(p.opener)) setActive(p.opener); else ensureActive();
+      }, 60);
+    }
     function back() {
+      if (popupItems().length) { closePopup(); return; }
+      popup = null;
       var menu = (active && openMenu(active)) || visibleMenu();
       if (menu) { closeMenu(menu); return; }
       // Nothing open: give the remote back to the page around the player.
