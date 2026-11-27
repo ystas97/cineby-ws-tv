@@ -482,7 +482,7 @@
     function addFooter(stage){
       var footer=add(stage,'footer','cbws-footer');
       add(footer,'span','','↑ ↓ ← →  Navigate     ·     OK  Select     ·     Back  Return');
-      add(footer,'span','','TV EDITION  1.5  /  CINEBY.WS');
+      add(footer,'span','','TV EDITION  1.5.1  /  CINEBY.WS');
     }
     function pageLinks(currentPath) {
       var out=[], seen={};
