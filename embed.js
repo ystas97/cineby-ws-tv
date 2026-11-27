@@ -13,6 +13,8 @@
   var MENU = '[role="menu"],[role="listbox"],[role="dialog"],[class*="settings-menu"],[class*="settings-popup"],[class*="submenu"],[class*="dropdown"],[class*="popup"],[class*="popover"],[class*="-menu"],[class*="_menu"],[class*="menu-"]';
   var SELECTOR = 'button,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="option"],[role="tab"],[role="switch"],[role="radio"],[role="checkbox"],a[href],input:not([type="hidden"]),select,summary,[tabindex]:not([tabindex="-1"]),iframe';
   var FOCUS = 'cbws-embed-focus';
+  var CONTROL_TAGS = /^(BUTTON|A|INPUT|SELECT|SUMMARY|IFRAME)$/;
+  var CONTROL_ROLES = /^(button|menuitem|menuitemradio|menuitemcheckbox|option|tab|switch|radio|checkbox|slider)$/;
 
   function directionalScore(from, to, direction) {
     var horizontal = direction === 'left' || direction === 'right';
@@ -190,9 +192,11 @@
       for (var i = 0; i < list.length; i++) {
         var el = list[i];
         if (!isVisible(el)) continue;
-        // A tabindex wrapper around a real button counts once.
-        if (el.tagName !== 'BUTTON' && el.tagName !== 'A' && !el.getAttribute('role') &&
-            el.querySelector && el.querySelector('button,[role="button"],a[href]')) continue;
+        // A focusable wrapper (e.g. JW Player's whole "Video Player" box)
+        // around real controls is not a target itself: arrows could never
+        // leave it, since everything else lies inside it.
+        if (!CONTROL_TAGS.test(el.tagName) && !CONTROL_ROLES.test(el.getAttribute('role') || '') &&
+            el.querySelector && el.querySelector(SELECTOR)) continue;
         out.push(el);
       }
       return out;
