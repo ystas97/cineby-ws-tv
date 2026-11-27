@@ -1062,7 +1062,10 @@
     }
     function osdBarKey(direction,el){
       var osd=theatre&&theatre.osd;
-      if(!osd||el!==osd.bar||(direction!=='left'&&direction!=='right'))return false;
+      if(!osd||el!==osd.bar)return false;
+      if(direction==='down'){setActive(osd.toggle,false);return true;}
+      if(direction==='up')return true;
+      if(direction!=='left'&&direction!=='right')return false;
       osdCommand('seekBy',{s:direction==='left'?-10:10});
       hint(direction==='left'?'⏪  −10 s':'⏩  +10 s');
       return true;
