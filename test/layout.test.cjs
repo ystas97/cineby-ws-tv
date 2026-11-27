@@ -77,7 +77,18 @@ function pageFixture(options={}){
       mediaNode.paused=true;mediaNode.currentTime=0;mediaNode.duration=120;
       mediaNode.play=function(){this.paused=false;this.fire('play');};mediaNode.pause=function(){this.paused=true;this.fire('pause');};
     }
+    if(options.site){
+      // Real cineby markup; sizes reported as zero, like a TV browser that
+      // has not laid the section out yet.
+      const zero={left:0,top:0,right:0,bottom:0,width:0,height:0};
+      const sectionNode=main.appendChild(new Node('section'));sectionNode.id='player';sectionNode.className='watch-section player-hidden';sectionNode.rect=zero;
+      const big=sectionNode.appendChild(new Node('button'));big.id='playerPlayBtn';big.rect=zero;
+      const frame=sectionNode.appendChild(new Node('iframe'));frame.id='video-player';frame.rect=zero;
+      big.addEventListener('click',()=>{frame.setAttribute('src','https://embed.invalid/movie/1');});
+      mediaNode=frame;
+    }
     play.addEventListener('click',()=>{
+      if(options.site){document.getElementById('player').classList.remove('player-hidden');return;}
       if(!options.preview){createMedia();return;}
       const wrapper=main.appendChild(new Node('div'));wrapper.rect={left:30,top:200,right:1250,bottom:900,width:1220,height:700};
       const image=wrapper.appendChild(new Node('img'));image.setAttribute('alt','Play movie');image.rect=wrapper.rect;
@@ -198,6 +209,20 @@ test('focus returns from the embedded player so Return closes it',()=>{
   fixture.window.location.reload=function(){this.reloaded=true;};
   key(10009);
   assert.equal(document.getElementById('cbws-tv-player-ui'),null,'Return leaves the player.');
+});
+test('cineby player ids start the embed full-screen even when sizes are unreliable',()=>{
+  const fixture=pageFixture({detail:true,site:true});
+  const {document,key,window}=fixture;
+  key(13);
+  const frame=fixture.media();
+  assert.equal(frame.getAttribute('src'),'https://embed.invalid/movie/1','The big play button was pressed for us.');
+  const hud=document.getElementById('cbws-tv-player-ui');
+  assert.ok(hud);
+  assert.ok(frame.classList.contains('cbws-theatre-media'));
+  window.location.reload=function(){window.reloaded=true;};
+  key(10009);
+  assert.equal(document.getElementById('cbws-tv-player-ui'),null);
+  assert.equal(window.reloaded,true,'Return stops the embed by reloading the title page.');
 });
 test('Samsung Return goes from the preview to title then from title to browse',()=>{
   const fixture=pageFixture({detail:true,preview:true});

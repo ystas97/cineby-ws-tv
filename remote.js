@@ -482,7 +482,7 @@
     function addFooter(stage){
       var footer=add(stage,'footer','cbws-footer');
       add(footer,'span','','↑ ↓ ← →  Navigate     ·     OK  Select     ·     Back  Return');
-      add(footer,'span','','TV EDITION  1.4  /  CINEBY.WS');
+      add(footer,'span','','TV EDITION  1.4.1  /  CINEBY.WS');
     }
     function pageLinks(currentPath) {
       var out=[], seen={};
@@ -971,7 +971,7 @@
       return false;
     }
     function restoreDetail(){
-      var player=findPlayer(),wasPlaying=!!playSession;
+      var player=theatre&&theatre.media||findPlayer()||siteFrame(),wasPlaying=!!playSession;
       playSession=null;stopPlayerWait();
       if(theatre)closeTheatre();
       if(wasPlaying&&player&&player.tagName==='VIDEO'){try{player.pause();}catch(ignore){}}
@@ -1070,8 +1070,40 @@
         else ensureActive();
       },8000);
     }
+    // cineby.ws has fixed ids for its player: #player (section), #playerPlayBtn
+    // (big play button over the poster) and #video-player (the embed iframe).
+    // Use them directly; TV browsers can report sizes and visibility
+    // differently, which made the generic detection miss the player.
+    function siteFrame(){
+      var f=document.getElementById('video-player');
+      return f&&f.tagName==='IFRAME'&&!(root&&root.contains(f))?f:null;
+    }
+    function siteFrameLoaded(f){
+      var src=f.getAttribute('src');
+      return !!src&&src!=='about:blank';
+    }
+    function siteStart(){
+      var frame=siteFrame();
+      if(!frame)return false;
+      if(siteFrameLoaded(frame)){startTheatre(frame);return true;}
+      var start=document.getElementById('playerPlayBtn')||document.getElementById('playerBackdrop');
+      // Series attach the play handler only after the episode request, so
+      // press again from time to time until the iframe gets its source.
+      if(start&&Date.now()-(playRequest.siteClick||0)>1200){
+        playRequest.siteClick=Date.now();playRequest.stage='loading';
+        playSession=window.location.pathname;
+        if(!playRequest.until)playRequest.until=Date.now()+18000;
+        var section=document.getElementById('player');
+        if(section&&section.classList)section.classList.remove('player-hidden');
+        try{start.click();}catch(ignore){}
+        if(siteFrameLoaded(frame)){startTheatre(frame);return true;}
+      }
+      waitForPlayer();
+      return true;
+    }
     function afterPlayRequest(){
       if(!playRequest)return;
+      if(isTitlePath(window.location.pathname)&&siteStart())return;
       if(playRequest.stage!=='loading'){
         // The site first reveals a poster with a big play button. Press it
         // straight away so Play Now starts the video in one step.
