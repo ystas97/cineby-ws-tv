@@ -35,6 +35,68 @@
       (Object.prototype.hasOwnProperty.call(codes, code) ? codes[code] : null);
   }
 
+  // Pop-up and redirect guard, like a browser's pop-up blocker. Ad scripts
+  // in player pages open a new window (or follow a link out) on any click;
+  // on the TV that replaces the whole screen. The player keeps working; only
+  // windows and links that leave it are stopped. Shared with tv.js.
+  function installPopupGuard(win, doc, allowed, onBlock) {
+    if (win.__cbwsPopupGuard) return;
+    win.__cbwsPopupGuard = true;
+    function report(url) { try { if (onBlock) onBlock(String(url || '')); } catch (ignore) {} }
+    function fakeWindow() {
+      var noop = function () {};
+      var w = {closed: false, opener: null, name: '', frames: [], length: 0,
+        location: {href: 'about:blank', assign: noop, replace: noop, reload: noop},
+        document: {write: noop, writeln: noop, open: noop, close: noop, body: null, documentElement: null},
+        close: function () { w.closed = true; }, focus: noop, blur: noop, moveTo: noop, resizeTo: noop,
+        postMessage: noop, addEventListener: noop, removeEventListener: noop};
+      w.window = w.self = w;
+      return w;
+    }
+    function blockedOpen(url) { report(url); return fakeWindow(); }
+    try { Object.defineProperty(win, 'open', {value: blockedOpen, writable: false, configurable: false}); }
+    catch (err) { try { win.open = blockedOpen; } catch (ignore) {} }
+    function leaves(el) {
+      if (!el || !el.getAttribute) return false;
+      var href = el.getAttribute(el.tagName === 'FORM' ? 'action' : 'href');
+      var target = String(el.getAttribute('target') || '').toLowerCase();
+      if (target && target !== '_self') return true;
+      if (!href || /^\s*(#|javascript:)/i.test(href)) return false;
+      var url;
+      try { url = new win.URL(href, doc.baseURI || win.location.href); } catch (ignore) { return false; }
+      if (!/^https?:$/.test(url.protocol)) return false;
+      return !allowed(url);
+    }
+    doc.addEventListener('click', function (event) {
+      var t = event.target, a = t && t.closest ? t.closest('a[href],area[href]') : null;
+      if (a && leaves(a)) { event.preventDefault(); report(a.href); }
+    }, true);
+    doc.addEventListener('submit', function (event) {
+      if (leaves(event.target)) { event.preventDefault(); report(event.target.action); }
+    }, true);
+    var A = win.HTMLAnchorElement && win.HTMLAnchorElement.prototype;
+    if (A && A.click) {
+      var anchorClick = A.click;
+      A.click = function () { if (leaves(this)) { report(this.href); return; } return anchorClick.apply(this, arguments); };
+    }
+    var F = win.HTMLFormElement && win.HTMLFormElement.prototype;
+    if (F && F.submit) {
+      var formSubmit = F.submit;
+      F.submit = function () { if (leaves(this)) { report(this.action); return; } return formSubmit.apply(this, arguments); };
+    }
+    // A click dispatched on a link that is not in the page still navigates.
+    var E = win.EventTarget && win.EventTarget.prototype;
+    if (E && E.dispatchEvent) {
+      var dispatch = E.dispatchEvent;
+      E.dispatchEvent = function (event) {
+        if (event && event.type === 'click' && this && this.tagName === 'A' && !doc.documentElement.contains(this) && leaves(this)) {
+          report(this.href); return false;
+        }
+        return dispatch.apply(this, arguments);
+      };
+    }
+  }
+
   function createEmbedRemote(window, document) {
     var active = null, opener = null, started = false;
 
@@ -360,6 +422,10 @@
     }
     function onMessage(event) {
       var data = event.data;
+      if (data && data.cbws === 'blocked') {
+        try { window.parent.postMessage({cbws: 'blocked'}, '*'); } catch (ignore) {}
+        return;
+      }
       if (!data || data.cbws !== 'exit') return;
       // A nested player frame handed control back to this one.
       var frames = document.querySelectorAll('iframe');
@@ -391,13 +457,16 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {createEmbedRemote: createEmbedRemote, keyAction: keyAction};
+    module.exports = {createEmbedRemote: createEmbedRemote, keyAction: keyAction, installPopupGuard: installPopupGuard};
     return;
   }
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
   if (window.__cinebyWsEmbed) return;
   if (window.top === window.self && !window.__cbwsEmbedTest) return;
   window.__cinebyWsEmbed = true;
+  installPopupGuard(window, document, function (url) { return url.origin === window.location.origin; }, function () {
+    try { window.parent.postMessage({cbws: 'blocked'}, '*'); } catch (ignore) {}
+  });
   var remote = createEmbedRemote(window, document);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', remote.start);
   else remote.start();

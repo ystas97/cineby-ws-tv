@@ -66,6 +66,68 @@
     return '';
   }
 
+  // Pop-up and redirect guard, like a browser's pop-up blocker. Ad scripts
+  // in player pages open a new window (or follow a link out) on any click;
+  // on the TV that replaces the whole screen. The player keeps working; only
+  // windows and links that leave it are stopped. Shared with tv.js.
+  function installPopupGuard(win, doc, allowed, onBlock) {
+    if (win.__cbwsPopupGuard) return;
+    win.__cbwsPopupGuard = true;
+    function report(url) { try { if (onBlock) onBlock(String(url || '')); } catch (ignore) {} }
+    function fakeWindow() {
+      var noop = function () {};
+      var w = {closed: false, opener: null, name: '', frames: [], length: 0,
+        location: {href: 'about:blank', assign: noop, replace: noop, reload: noop},
+        document: {write: noop, writeln: noop, open: noop, close: noop, body: null, documentElement: null},
+        close: function () { w.closed = true; }, focus: noop, blur: noop, moveTo: noop, resizeTo: noop,
+        postMessage: noop, addEventListener: noop, removeEventListener: noop};
+      w.window = w.self = w;
+      return w;
+    }
+    function blockedOpen(url) { report(url); return fakeWindow(); }
+    try { Object.defineProperty(win, 'open', {value: blockedOpen, writable: false, configurable: false}); }
+    catch (err) { try { win.open = blockedOpen; } catch (ignore) {} }
+    function leaves(el) {
+      if (!el || !el.getAttribute) return false;
+      var href = el.getAttribute(el.tagName === 'FORM' ? 'action' : 'href');
+      var target = String(el.getAttribute('target') || '').toLowerCase();
+      if (target && target !== '_self') return true;
+      if (!href || /^\s*(#|javascript:)/i.test(href)) return false;
+      var url;
+      try { url = new win.URL(href, doc.baseURI || win.location.href); } catch (ignore) { return false; }
+      if (!/^https?:$/.test(url.protocol)) return false;
+      return !allowed(url);
+    }
+    doc.addEventListener('click', function (event) {
+      var t = event.target, a = t && t.closest ? t.closest('a[href],area[href]') : null;
+      if (a && leaves(a)) { event.preventDefault(); report(a.href); }
+    }, true);
+    doc.addEventListener('submit', function (event) {
+      if (leaves(event.target)) { event.preventDefault(); report(event.target.action); }
+    }, true);
+    var A = win.HTMLAnchorElement && win.HTMLAnchorElement.prototype;
+    if (A && A.click) {
+      var anchorClick = A.click;
+      A.click = function () { if (leaves(this)) { report(this.href); return; } return anchorClick.apply(this, arguments); };
+    }
+    var F = win.HTMLFormElement && win.HTMLFormElement.prototype;
+    if (F && F.submit) {
+      var formSubmit = F.submit;
+      F.submit = function () { if (leaves(this)) { report(this.action); return; } return formSubmit.apply(this, arguments); };
+    }
+    // A click dispatched on a link that is not in the page still navigates.
+    var E = win.EventTarget && win.EventTarget.prototype;
+    if (E && E.dispatchEvent) {
+      var dispatch = E.dispatchEvent;
+      E.dispatchEvent = function (event) {
+        if (event && event.type === 'click' && this && this.tagName === 'A' && !doc.documentElement.contains(this) && leaves(this)) {
+          report(this.href); return false;
+        }
+        return dispatch.apply(this, arguments);
+      };
+    }
+  }
+
   function createTvLayout() {
     var root=null, suppressed='', mountedUrl='', refreshDelay=0, openModeButton=null;
     var layoutId='cbws-tv-screen';
@@ -482,7 +544,7 @@
     function addFooter(stage){
       var footer=add(stage,'footer','cbws-footer');
       add(footer,'span','','↑ ↓ ← →  Navigate     ·     OK  Select     ·     Back  Return');
-      add(footer,'span','','TV EDITION  1.5.1  /  CINEBY.WS');
+      add(footer,'span','','TV EDITION  1.5.2  /  CINEBY.WS');
     }
     function pageLinks(currentPath) {
       var out=[], seen={};
@@ -1087,10 +1149,11 @@
     // Messages from embed.js running inside a player frame of this page.
     function onFrameMessage(event){
       var data=event&&event.data;
-      if(!data||typeof data!=='object'||(data.cbws!=='embed-ready'&&data.cbws!=='exit'))return;
+      if(!data||typeof data!=='object'||(data.cbws!=='embed-ready'&&data.cbws!=='exit'&&data.cbws!=='blocked'))return;
       var frames=document.querySelectorAll('iframe'),frame=null;
       for(var i=0;i<frames.length;i++)if(frames[i].contentWindow===event.source){frame=frames[i];break;}
       if(!frame)return;
+      if(data.cbws==='blocked'){hint('Pop-up blocked');return;}
       if(data.cbws==='embed-ready'){
         if(!helperIn(frame))helperFrames.push(frame.contentWindow);
         if(document.activeElement===frame&&frameTimer){clearTimeout(frameTimer);frameTimer=0;}
@@ -1205,7 +1268,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {directionalScore:directionalScore,pickNext:pickNext,keyAction:keyAction,isTitlePath:isTitlePath,isBrowsePath:isBrowsePath,cardText:cardText,sectionLabel:sectionLabel};
+    module.exports = {installPopupGuard:installPopupGuard,directionalScore:directionalScore,pickNext:pickNext,keyAction:keyAction,isTitlePath:isTitlePath,isBrowsePath:isBrowsePath,cardText:cardText,sectionLabel:sectionLabel};
     return;
   }
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -1522,8 +1585,17 @@
     },120);
   }
 
+  function onCineby(url){return /^(www\.)?cineby\.ws$/i.test(url.hostname);}
   function start(){
     initStyle();
+    installPopupGuard(window,document,onCineby,function(){hint('Pop-up blocked');});
+    // Where the TV browser supports it, also stop other sites taking over
+    // the whole tab (an ad in the player frame navigating the page away).
+    try{
+      if(window.navigation&&window.navigation.addEventListener)window.navigation.addEventListener('navigate',function(event){
+        try{var url=new URL(event.destination.url);if(!onCineby(url)&&event.cancelable){event.preventDefault();hint('Pop-up blocked');}}catch(ignore){}
+      });
+    }catch(ignore){}
     window.addEventListener('keydown',onKey,true);
     document.addEventListener('keydown',onKey,true);
     document.addEventListener('mousedown',onPointer,true);
