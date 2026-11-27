@@ -1,4 +1,4 @@
-/* Cineby WS TV: client-side remote navigation, no network requests. */
+/* Cineby WS TV: TV layout and client-side remote navigation, no player API requests. */
 (function () {
   'use strict';
 
@@ -38,8 +38,320 @@
       (Object.prototype.hasOwnProperty.call(codes,code) ? codes[code] : null);
   }
 
+  // TV layout helpers: presentation-only, using links and artwork already
+  // present in the current document. No requests to content or player APIs.
+  function isTitlePath(path) {
+    return /^\/(movie|tv)\/[^/]+\/?$/i.test(path || '');
+  }
+  function isBrowsePath(path) {
+    return /^(\/|\/home\/?|\/movies\/?|\/tv\/?|\/search(?:\/.*)?\/?|\/my-room\/?)$/i.test(path || '');
+  }
+  function cardText(raw) {
+    var s = String(raw || '').replace(/\s+/g,' ').trim();
+    var year = s.match(/(?:\s|^)((?:19|20)\d{2})\s*$/);
+    var rating = s.match(/★\s*(\d+(?:\.\d+)?)/);
+    var episode = s.match(/\bS\d+\s*E\d+\b/i);
+    s = s.replace(/^#?\d+\s+(?=TV\b)/i,'').replace(/^TV\s+/i,'')
+      .replace(/^★\s*\d+(?:\.\d+)?\s*/,'').replace(/^S\d+\s*E\d+\s*/i,'')
+      .replace(/\s+(?:19|20)\d{2}\s*$/,'').trim();
+    if (/^(play|see more|watch now|view all|\d+)$/i.test(s)) s='';
+    return {title:s,year:year?year[1]:'',rating:rating?rating[1]:'',episode:episode?episode[0].toUpperCase():''};
+  }
+  function sectionLabel(raw) {
+    var s=String(raw || '').replace(/\s+/g,' ').trim().toLowerCase();
+    if (s.indexOf('updated tv')>=0) return 'Just updated';
+    if (s.indexOf('new tv')>=0) return 'New series';
+    if (s.indexOf('new movies')>=0) return 'New movies';
+    if (s.indexOf('hot right now')>=0 || s.indexOf('trending')>=0) return 'Popular now';
+    return '';
+  }
+
+  function createTvLayout() {
+    var root=null, suppressed='', mountedUrl='', refreshDelay=0, openModeButton=null;
+    var layoutId='cbws-tv-screen';
+    var nativeClass='cbws-native-tv';
+    var CSS=[
+      '#cbws-tv-screen{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;z-index:2147483000!important;background:#080e18!important;color:#f3f5fa!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;font-family:Arial,Helvetica,sans-serif!important;font-size:20px!important;line-height:1.4!important;margin:0!important;padding:0!important;text-align:left!important;}',
+      '#cbws-tv-screen *{box-sizing:border-box;}',
+      '#cbws-tv-screen a,#cbws-tv-screen button{font-family:inherit!important;text-decoration:none!important;color:inherit!important;cursor:pointer;outline:none;border:0!important;box-shadow:none;max-width:none!important;}',
+      '#cbws-tv-screen a:focus,#cbws-tv-screen button:focus,#cbws-tv-screen .cbws-tv-focus{outline:3px solid #a5fbec!important;outline-offset:3px!important;box-shadow:0 0 0 6px rgba(165,251,236,.19)!important;}',
+      '#cbws-tv-screen .cbws-masthead{height:82px;min-height:70px;flex:none;display:flex;align-items:center;padding:0 3.8vw;border-bottom:1px solid #222d3c;background:#0b1320;}',
+      '#cbws-tv-screen .cbws-brand{display:flex;align-items:center;font-weight:900;font-size:27px;letter-spacing:1px;white-space:nowrap;margin-right:3.4vw;color:#fff!important;background:transparent!important;padding:8px 0!important;}',
+      '#cbws-tv-screen .cbws-orbit{display:inline-block;border:3px solid #a5fbec;width:24px;height:24px;border-radius:50%;margin-right:11px;transform:rotate(-35deg);position:relative;}',
+      '#cbws-tv-screen .cbws-orbit:after{content:"";position:absolute;left:-5px;right:-5px;top:8px;border-top:2px solid #a5fbec;}',
+      '#cbws-tv-screen .cbws-brand small{font-weight:800;font-size:13px;color:#a5fbec;margin-left:7px;letter-spacing:2px;align-self:center;}',
+      '#cbws-tv-screen .cbws-nav{display:flex;flex:1;align-items:center;white-space:nowrap;height:100%;}',
+      '#cbws-tv-screen .cbws-nav a,#cbws-tv-screen .cbws-nav button{background:transparent!important;font-weight:700;font-size:18px!important;color:#acb9ca!important;padding:14px 15px!important;border-radius:8px!important;margin-right:3px;line-height:1.1!important;}',
+      '#cbws-tv-screen .cbws-nav .is-current{background:#263443!important;color:#d0fff5!important;}',
+      '#cbws-tv-screen .cbws-actions{display:flex;align-items:center;}',
+      '#cbws-tv-screen .cbws-actions button{background:#1b293a!important;color:#d9e5ef!important;border-radius:8px!important;padding:12px 16px!important;font-size:16px!important;margin-left:10px;white-space:nowrap;line-height:1.1!important;}',
+      '#cbws-tv-screen .cbws-content{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:24px 3.8vw 48px;scrollbar-width:none;}',
+      '#cbws-tv-screen .cbws-content::-webkit-scrollbar,#cbws-tv-screen .cbws-rail::-webkit-scrollbar{width:0;height:0;}',
+      '#cbws-tv-screen .cbws-hero{position:relative;min-height:275px;height:27vh;max-height:420px;display:flex;align-items:stretch;background:linear-gradient(115deg,#122b3d 0%,#162032 54%,#263e4e 100%);border:1px solid #2f4353;border-radius:16px;overflow:hidden;margin:0 0 27px;}',
+      '#cbws-tv-screen .cbws-hero-copy{padding:25px 32px;width:64%;position:relative;z-index:2;display:flex;flex-direction:column;justify-content:center;}',
+      '#cbws-tv-screen .cbws-kicker{font-weight:800;font-size:13px;letter-spacing:3px;color:#a5fbec;margin-bottom:12px;}',
+      '#cbws-tv-screen .cbws-hero h1{color:#fff!important;font-size:44px!important;line-height:1.05!important;font-weight:850!important;margin:0 0 12px!important;padding:0!important;letter-spacing:-1px;max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}',
+      '#cbws-tv-screen .cbws-hero-meta{color:#aebdce;font-size:18px;margin:0 0 24px!important;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;}',
+      '#cbws-tv-screen .cbws-hero-buttons{display:flex;align-items:center;}',
+      '#cbws-tv-screen .cbws-primary,#cbws-tv-screen .cbws-secondary{display:inline-flex;align-items:center;justify-content:center;border-radius:10px!important;font-size:18px!important;font-weight:800;padding:13px 22px!important;margin-right:12px;white-space:nowrap;line-height:1.2!important;}',
+      '#cbws-tv-screen .cbws-primary{background:#a5fbec!important;color:#122b32!important;}',
+      '#cbws-tv-screen .cbws-secondary{background:#30445a!important;color:#edf6ff!important;}',
+      '#cbws-tv-screen .cbws-hero-art{position:absolute;top:0;bottom:0;right:0;width:43%;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#142233;}',
+      '#cbws-tv-screen .cbws-hero-art img{position:absolute;top:0;left:0;width:100%!important;height:100%!important;object-fit:cover!important;object-position:50% 32%;opacity:.9;border:0!important;margin:0!important;max-height:none!important;}',
+      '#cbws-tv-screen .cbws-hero-art:after{content:"";position:absolute;top:0;bottom:0;left:0;right:0;background:linear-gradient(90deg,#192b3c 0%,rgba(25,43,60,.1) 40%,rgba(12,22,37,.02) 100%);}',
+      '#cbws-tv-screen .cbws-section{margin:22px 0 8px;}',
+      '#cbws-tv-screen .cbws-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}',
+      '#cbws-tv-screen .cbws-section-head h2,#cbws-tv-screen .cbws-page-title{font-size:27px!important;font-weight:800!important;line-height:1.2!important;color:#f3f5fa!important;margin:0!important;letter-spacing:-.4px;}',
+      '#cbws-tv-screen .cbws-page-title{font-size:38px!important;margin:3px 0 15px!important;}',
+      '#cbws-tv-screen .cbws-section-counter{font-size:15px;color:#94a9be;}',
+      '#cbws-tv-screen .cbws-rail{display:flex;overflow-x:auto;overflow-y:hidden;padding:7px 7px 14px;margin:0 -7px;scrollbar-width:none;}',
+      '#cbws-tv-screen .cbws-grid{display:flex;flex-wrap:wrap;padding:7px 7px 14px;margin:0 -7px;}',
+      '#cbws-tv-screen .cbws-card{display:flex!important;flex-direction:column;flex:none;width:15.1vw;min-width:145px;max-width:260px!important;border-radius:11px!important;overflow:hidden;background:#152233!important;padding:0!important;margin:0 18px 0 0!important;text-align:left!important;white-space:normal!important;}',
+      '#cbws-tv-screen .cbws-grid .cbws-card{width:calc(16.666% - 15px);min-width:0;margin:0 15px 24px 0!important;}',
+      '#cbws-tv-screen .cbws-poster{position:relative;height:0;padding-bottom:140%;background:linear-gradient(150deg,#273d4d,#142133);overflow:hidden;}',
+      '#cbws-tv-screen .cbws-poster img{position:absolute;top:0;left:0;width:100%!important;height:100%!important;object-fit:cover!important;border:0!important;margin:0!important;max-height:none!important;}',
+      '#cbws-tv-screen .cbws-placeholder{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:18px;color:#92c8d0;font-size:25px;font-weight:bold;line-height:1.1;}',
+      '#cbws-tv-screen .cbws-rating{position:absolute;top:10px;right:10px;background:rgba(7,14,21,.91);color:#fbe6a6;padding:5px 7px;border-radius:6px;font-size:13px;font-weight:bold;z-index:1;}',
+      '#cbws-tv-screen .cbws-card-body{padding:13px 12px 14px;min-height:83px;}',
+      '#cbws-tv-screen .cbws-card-name{display:block!important;font-size:18px!important;font-weight:750!important;line-height:1.15!important;color:#f3f5fa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0!important;}',
+      '#cbws-tv-screen .cbws-card-meta{display:block;font-size:14px!important;color:#9daec2;margin-top:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+      '#cbws-tv-screen .cbws-toolbar{display:flex;align-items:center;flex-wrap:wrap;margin:0 0 20px;}',
+      '#cbws-tv-screen .cbws-chip{display:inline-flex!important;align-items:center;background:#1d2b3b!important;color:#dce7f5!important;border-radius:9px!important;padding:10px 15px!important;margin:0 10px 8px 0!important;font-size:16px!important;font-weight:bold;line-height:1.15!important;white-space:nowrap;}',
+      '#cbws-tv-screen .cbws-footer{flex:none;display:flex;align-items:center;justify-content:space-between;min-height:41px;padding:6px 3.8vw;background:#0b1320;border-top:1px solid #222d3c;font-size:13px;color:#91a0b2;letter-spacing:.2px;}',
+      '#cbws-tv-screen .cbws-footer b{color:#e7effc;}',
+      '#cbws-tv-native-toggle{position:fixed!important;bottom:16px!important;right:20px!important;z-index:2147482999!important;background:#142637!important;color:#a5fbec!important;border:2px solid #a5fbec!important;border-radius:9px!important;padding:12px 18px!important;font:700 17px Arial,sans-serif!important;}',
+      'html.cbws-native-tv h1{font-size:clamp(28px,3.4vw,50px);line-height:1.15;}',
+      'html.cbws-native-tv h2{font-size:clamp(22px,2.1vw,34px);line-height:1.2;}',
+      'html.cbws-native-tv main input,html.cbws-native-tv main select,html.cbws-native-tv main button{font-size:18px;min-height:40px;}',
+      '@media(max-width:1400px){#cbws-tv-screen .cbws-masthead{height:65px;min-height:65px;}#cbws-tv-screen .cbws-brand{font-size:23px;margin-right:2vw;}#cbws-tv-screen .cbws-nav a,#cbws-tv-screen .cbws-nav button{font-size:16px!important;padding:11px 13px!important;}#cbws-tv-screen .cbws-actions button{padding:10px 12px!important;font-size:14px!important;}#cbws-tv-screen .cbws-content{padding-top:20px;}#cbws-tv-screen .cbws-hero{min-height:224px;height:30vh;}#cbws-tv-screen .cbws-hero-copy{padding:20px 25px;}#cbws-tv-screen .cbws-hero h1{font-size:36px!important;}#cbws-tv-screen .cbws-card-name{font-size:16px!important;}#cbws-tv-screen .cbws-card-meta{font-size:13px!important;}}',
+      '@media(max-width:900px){#cbws-tv-screen .cbws-brand{font-size:20px;margin-right:2vw;}#cbws-tv-screen .cbws-brand small{display:none;}#cbws-tv-screen .cbws-nav a,#cbws-tv-screen .cbws-nav button{font-size:14px!important;padding:10px!important;}#cbws-tv-screen .cbws-actions button{padding:9px!important;font-size:13px!important;margin-left:5px;}#cbws-tv-screen .cbws-hero{min-height:200px;}#cbws-tv-screen .cbws-hero h1{font-size:30px!important;}#cbws-tv-screen .cbws-hero-meta{font-size:15px;}#cbws-tv-screen .cbws-grid .cbws-card{width:calc(25% - 15px);}#cbws-tv-screen .cbws-card{width:20vw;min-width:120px;}}'
+    ].join('\n');
+    function element(tag, cls, value){
+      var e=document.createElement(tag);
+      if(cls)e.className=cls;
+      if(value!==undefined && value!==null)e.textContent=String(value);
+      return e;
+    }
+    function add(parent,tag,cls,value){var e=element(tag,cls,value);parent.appendChild(e);return e;}
+    function button(parent,cls,label,fn){
+      var b=add(parent,'button',cls,label);
+      b.type='button';b.addEventListener('click',fn);
+      return b;
+    }
+    function link(parent,cls,label,url){
+      var a=add(parent,'a',cls,label);
+      a.href=url;
+      return a;
+    }
+    function routeOf(a){
+      if(!a || !a.hostname || !/^(www\.)?cineby\.ws$/i.test(a.hostname) || !/^https?:$/i.test(a.protocol))return '';
+      return a.pathname;
+    }
+    function imageOf(img){
+      if(!img)return '';
+      var url=img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || img.currentSrc || img.getAttribute('src') || '';
+      if(!url || /^data:/i.test(url))return '';
+      var a=document.createElement('a');a.href=url;
+      return /^https?:$/i.test(a.protocol)?a.href:'';
+    }
+    function titleFor(a) {
+      if(!isTitlePath(routeOf(a)))return null;
+      var parsed=cardText(a.innerText || a.textContent);
+      var img=a.querySelector('img');
+      var alt=img && (img.getAttribute('alt')||'').trim();
+      var explicit=(a.getAttribute('title')||a.getAttribute('aria-label')||'').trim();
+      var name=alt && !/^(image|poster|thumbnail|play episode|play|logo)$/i.test(alt)?cardText(alt).title:'';
+      if(!name && explicit)name=cardText(explicit).title;
+      if(!name)name=parsed.title;
+      if(!name || name.length>160 || /^(play(?:\s+s\d+e\d+)?|see more|watch|watch now|latest|\d+)$/i.test(name))return null;
+      return {title:name,path:a.href,url:imageOf(img),year:parsed.year,rating:parsed.rating,episode:parsed.episode,type:routeOf(a).indexOf('/movie/')===0?'Movie':'Series'};
+    }
+    function collect() {
+      var path=window.location.pathname.replace(/\/$/,'') || '/';
+      var home=path==='/'||path==='/home';
+      var groups=[], group=null, names={};
+      function createGroup(label){
+        if(names[label])return names[label];
+        var g={label:label,items:[],seen:{}};
+        names[label]=g;groups.push(g);return g;
+      }
+      group=createGroup(home?'Explore':path==='/movies'?'Movies':path==='/tv'?'Series':path==='/my-room'?'My shelf':'Search results');
+      var nodes=document.querySelectorAll('h2,a[href]');
+      for(var i=0;i<nodes.length;i++){
+        var node=nodes[i];
+        if(root && root.contains(node))continue;
+        if(home && node.tagName==='H2'){
+          var l=sectionLabel(node.textContent);
+          if(l)group=createGroup(l);
+        } else if(node.tagName==='A'){
+          var card=titleFor(node);
+          if(!card || group.seen[card.path])continue;
+          group.seen[card.path]=true;group.items.push(card);
+        }
+      }
+      var output=[];
+      for(var j=0;j<groups.length;j++)if(groups[j].items.length>= (home?2:1)) output.push(groups[j]);
+      return output;
+    }
+    function clearFocus(){
+      if(active)active.classList.remove(focusClass);
+      active=null;dirty=true;
+    }
+    function removeModeButton(){
+      if(openModeButton && openModeButton.parentNode)openModeButton.parentNode.removeChild(openModeButton);
+      openModeButton=null;
+    }
+    function unmount(){
+      if(root && root.parentNode)root.parentNode.removeChild(root);
+      root=null;mountedUrl='';
+      clearFocus();
+    }
+    function showModeButton(){
+      if(openModeButton && openModeButton.parentNode)return;
+      openModeButton=button(document.body,'','TV view',function(){
+        suppressed='';removeModeButton();update();ensureActive();
+      });
+      openModeButton.id='cbws-tv-native-toggle';
+    }
+    function nativeMode(search){
+      suppressed=window.location.href;
+      unmount();showModeButton();
+      if(search){
+        var input=document.querySelector('input[placeholder*="Search"],input[type="search"],input[name="q"],input[name="search"]');
+        if(input && isVisible(input)){
+          setActive(input,false);input.focus();
+          try{input.click();}catch(ignore){}
+          reveal(input);
+        }else hint('Use the original site search');
+      }else ensureActive();
+    }
+    function addImage(frame,card){
+      add(frame,'span','cbws-placeholder',card.title);
+      if(!card.url)return;
+      var img=add(frame,'img','');
+      img.alt=card.title;img.src=card.url;
+      img.addEventListener('error',function(){if(img.parentNode)img.parentNode.removeChild(img);});
+    }
+    function metadata(card){
+      return [card.type,card.year,card.episode].filter(function(v){return !!v;}).join('  ·  ');
+    }
+    function tile(parent,card){
+      var a=link(parent,'cbws-card',null,card.path);
+      a.setAttribute('aria-label',card.title);
+      var poster=add(a,'div','cbws-poster');
+      addImage(poster,card);
+      if(card.rating)add(poster,'span','cbws-rating','★ '+card.rating);
+      var body=add(a,'div','cbws-card-body');
+      add(body,'span','cbws-card-name',card.title);
+      add(body,'span','cbws-card-meta',metadata(card));
+    }
+    function addHeader(screen,currentPath){
+      var head=add(screen,'header','cbws-masthead');
+      var brand=link(head,'cbws-brand',null,'/home');
+      add(brand,'span','cbws-orbit');
+      add(brand,'span','','CINEBY');
+      add(brand,'small','','TV');
+      var nav=add(head,'nav','cbws-nav');
+      var items=[['Home','/home'],['Movies','/movies'],['Series','/tv'],['My shelf','/my-room']];
+      for(var i=0;i<items.length;i++){
+        var cls=currentPath===items[i][1] || (currentPath==='/'&&i===0)?'is-current':'';
+        link(nav,cls,items[i][0],items[i][1]);
+      }
+      var actions=add(head,'div','cbws-actions');
+      button(actions,'','Search',function(){nativeMode(true);});
+      button(actions,'','Site view',function(){nativeMode(false);});
+    }
+    function addHero(content,card){
+      var hero=add(content,'section','cbws-hero');
+      var copy=add(hero,'div','cbws-hero-copy');
+      add(copy,'span','cbws-kicker','FEATURED ON CINEBY');
+      add(copy,'h1','',card.title);
+      add(copy,'p','cbws-hero-meta',metadata(card)+(card.rating?'  ·  ★ '+card.rating:''));
+      var actions=add(copy,'div','cbws-hero-buttons');
+      link(actions,'cbws-primary','Open details  →',card.path);
+      link(actions,'cbws-secondary','Browse '+(card.type==='Movie'?'movies':'series'),card.type==='Movie'?'/movies':'/tv');
+      var art=add(hero,'div','cbws-hero-art');
+      addImage(art,card);
+    }
+    function pageLinks(currentPath) {
+      var out=[], seen={};
+      var all=document.querySelectorAll('a[href]');
+      for(var i=0;i<all.length;i++){
+        var a=all[i], text=(a.textContent||'').replace(/\s+/g,' ').trim();
+        if(routeOf(a)!==currentPath || !/^(\d+|«|»|‹|›|Next|Previous|Most Recent|Top Watched|Top Rated)$/i.test(text))continue;
+        if(seen[text] || a.href===window.location.href)continue;
+        seen[text]=true;out.push({label:text,url:a.href});
+      }
+      return out;
+    }
+    function render(groups){
+      var p=window.location.pathname.replace(/\/$/,'')||'/';
+      var home=p==='/'||p==='/home';
+      var catalog=p==='/movies'||p==='/tv';
+      var pageNav=catalog?pageLinks(p):[];
+      var screen=element('div','');
+      screen.id=layoutId;screen.setAttribute('role','main');
+      addHeader(screen,p);
+      var content=add(screen,'div','cbws-content');
+      if(home){
+        var featured=groups[0].items[0];
+        for(var k=0;k<groups[0].items.length;k++)if(groups[0].items[k].url){featured=groups[0].items[k];break;}
+        addHero(content,featured);
+      }else{
+        add(content,'h1','cbws-page-title',p==='/movies'?'Movies':p==='/tv'?'Series':p==='/my-room'?'My shelf':'Search results');
+        var toolbar=add(content,'div','cbws-toolbar');
+        if(catalog)button(toolbar,'cbws-chip','Genres and filters',function(){nativeMode(false);});
+        for(var q=0;q<pageNav.length;q++)if(/Most Recent|Top Watched|Top Rated/i.test(pageNav[q].label))link(toolbar,'cbws-chip',pageNav[q].label,pageNav[q].url);
+      }
+      for(var i=0;i<groups.length;i++){
+        var g=groups[i], section=add(content,'section','cbws-section');
+        if(home){
+          var head=add(section,'div','cbws-section-head');
+          add(head,'h2','',g.label);
+          add(head,'span','cbws-section-counter',g.items.length+' titles');
+        }
+        var row=add(section,'div',home?'cbws-rail':'cbws-grid');
+        for(var j=0;j<g.items.length;j++)tile(row,g.items[j]);
+      }
+      if(catalog){
+        var pagination=add(content,'div','cbws-toolbar');
+        for(var n=0;n<pageNav.length;n++)if(/^(\d+|«|»|‹|›|Next|Previous)$/i.test(pageNav[n].label))link(pagination,'cbws-chip',pageNav[n].label,pageNav[n].url);
+      }
+      var footer=add(screen,'footer','cbws-footer');
+      add(footer,'span','','↑ ↓ ← →  Navigate     ·     OK  Select     ·     Back  Return');
+      add(footer,'span','','TV EDITION  /  CINEBY.WS');
+      removeModeButton();
+      document.body.appendChild(screen);
+      root=screen;mountedUrl=window.location.href;
+      clearFocus();
+    }
+    function update(){
+      if(!document.body)return;
+      if(!document.getElementById('cbws-layout-style')){
+        var style=element('style','');style.id='cbws-layout-style';style.type='text/css';
+        style.appendChild(document.createTextNode(CSS));
+        (document.head||document.documentElement).appendChild(style);
+      }
+      document.documentElement.classList.add(nativeClass);
+      var href=window.location.href;
+      if(root && mountedUrl!==href)unmount();
+      if(suppressed && suppressed!==href){suppressed='';removeModeButton();}
+      if(suppressed===href){showModeButton();return;}
+      if(!isBrowsePath(window.location.pathname)){if(root)unmount();removeModeButton();return;}
+      if(root && root.parentNode)return;
+      // If the original page isn't populated yet, leave it usable and try
+      // again on the next mutation. Never hide a failed or empty page.
+      var groups=collect();var count=0;
+      for(var i=0;i<groups.length;i++)count+=groups[i].items.length;
+      if(count<3)return;
+      render(groups);
+    }
+    function getRoot(){return root && root.parentNode?root:null;}
+    return {update:update,getRoot:getRoot};
+  }
+
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {directionalScore:directionalScore,pickNext:pickNext,keyAction:keyAction};
+    module.exports = {directionalScore:directionalScore,pickNext:pickNext,keyAction:keyAction,isTitlePath:isTitlePath,isBrowsePath:isBrowsePath,cardText:cardText,sectionLabel:sectionLabel};
     return;
   }
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -59,6 +371,7 @@
   var updateTimer = 0;
   var observer;
   var navigationMode = true;
+  var tvLayout = createTvLayout();
 
   function initStyle() {
     if (document.getElementById('cbws-tv-style')) return;
@@ -118,6 +431,8 @@
   }
 
   function scope() {
+    var tvRoot=tvLayout.getRoot();
+    if(tvRoot)return tvRoot;
     var dialogs = document.querySelectorAll('dialog[open], [role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]');
     for (var i = dialogs.length - 1; i >= 0; i--) if (isVisible(dialogs[i])) return dialogs[i];
     return document;
@@ -341,6 +656,7 @@
         if(active)active.classList.remove(focusClass);
         active=null;
       }
+      tvLayout.update();
       if(navigationMode && (!active || !isVisible(active)) && !isTextInput(document.activeElement))ensureActive();
     },120);
   }
@@ -357,6 +673,7 @@
       observer=new MutationObserver(scheduleRefresh);
       observer.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden','aria-hidden','disabled','aria-disabled','aria-modal']});
     }
+    tvLayout.update();
     ensureActive();
     hint('Пульт активен: стрелки · OK · Назад');
   }

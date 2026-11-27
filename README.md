@@ -1,6 +1,6 @@
 # Cineby WS TV
 
-TizenBrew site-modification module for Samsung TVs. It adds visible focus and directional remote navigation to the existing website at https://cineby.ws/ — without reproducing its interface or collecting any credentials or browsing data.
+TizenBrew site-modification module for Samsung TVs. It provides a custom 10-foot browsing interface with large posters, a featured panel, category navigation and directional remote control. It uses only title links and artwork already visible on the loaded page at https://cineby.ws/ and does not collect credentials or browsing data.
 
 ## Установка
 
@@ -8,6 +8,15 @@ TizenBrew site-modification module for Samsung TVs. It adds visible focus and di
 2. Откройте **Module Manager → Add GitHub Module**.
 3. Введите `ystas97/cineby-ws-tv` (после публикации репозитория).
 4. Вернитесь в главное меню TizenBrew и запустите **Cineby WS TV**.
+
+### TV Edition 1.1
+
+- Главная открывается на каталоге /home, а не на приветственной странице.
+- Главный экран: крупный выделенный фильм и горизонтальные ряды обложек.
+- Movies / Series: крупная сетка, навигация по страницам и доступ к фильтрам.
+- Search и Site view открывают оригинальные элементы сайта. Кнопка TV view возвращает новый интерфейс.
+- Страницы деталей и плеера остаются оригинальными с улучшенным фокусом и читаемостью.
+- Если карточки не распознаны, модуль сохраняет исходную страницу как запасной вариант.
 
 Для воспроизведения требуется, чтобы сайт и его плеер поддерживались браузером конкретного телевизора.
 
@@ -39,4 +48,4 @@ TizenBrew site-modification module for Samsung TVs. It adds visible focus and di
 npm test
 ```
 
-Проверки покрывают геометрическую навигацию, коды клавиш и манифест. Физический телевизор нужен для проверки фактического воспроизведения и встроенной клавиатуры.
+Проверки покрывают геометрическую навигацию, коды клавиш, манифест, распознавание маршрутов и метаданных карточек. Физический телевизор нужен для проверки фактического воспроизведения и встроенной клавиатуры.
