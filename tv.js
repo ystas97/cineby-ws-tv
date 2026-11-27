@@ -617,7 +617,7 @@
       add(footer,'span','','↑ ↓ ← →  Navigate     ·     OK  Select     ·     Back  Return');
       var info=window.__cbwsLoaderInfo,build='';
       if(info&&info.ref)build='  ·  '+String(info.ref).slice(0,7)+(info.via?' ('+info.via+')':'');
-      add(footer,'span','','TV EDITION  1.5.5'+build+'  /  CINEBY.WS');
+      add(footer,'span','','TV EDITION  1.5.6'+build+'  /  CINEBY.WS');
     }
     function pageLinks(currentPath) {
       var out=[], seen={};
@@ -1380,7 +1380,7 @@
       render(groups);
     }
     function getRoot(){return playerUI&&playerUI.parentNode?playerUI:root&&root.parentNode?root:null;}
-    return {update:update,getRoot:getRoot,back:navigateBack,focused:focusHero,move:moveLayout,openLink:openLink,beginNativePlay:beginNativePlay,enterFrame:enterFrame,previewActivated:previewActivated,observeNativePlayClick:observeNativePlayClick,wakePlayer:wakePlayer,frameFocused:frameFocused,onFrameMessage:onFrameMessage,forwardKey:forwardKey};
+    return {update:update,getRoot:getRoot,back:navigateBack,focused:focusHero,move:moveLayout,openLink:openLink,beginNativePlay:beginNativePlay,enterFrame:enterFrame,previewActivated:previewActivated,observeNativePlayClick:observeNativePlayClick,wakePlayer:wakePlayer,frameFocused:frameFocused,onFrameMessage:onFrameMessage,forwardKey:forwardKey,isPlaying:function(){return !!(theatre||playSession||playRequest);}};
 
   }
 
@@ -1705,6 +1705,50 @@
   }
 
   function onCineby(url){return /^(www\.)?cineby\.ws$/i.test(url.hostname);}
+
+  // Self-update. TizenBrew can keep an old loader alive for a long time (the
+  // TV in standby keeps its service running), and that loader may stick to a
+  // saved commit. Every 10 minutes tv.js asks GitHub for the newest commit;
+  // if this page runs an older one, it stores the new id where every loader
+  // version reads it and reloads once, but never while a video is open.
+  var UPDATE_KEY='cbws-loader-ref',CHECK_KEY='cbws-update-check',CHECK_EVERY=10*60*1000;
+  function runningRef(){
+    var info=window.__cbwsLoaderInfo;
+    if(info&&info.ref)return String(info.ref);
+    var scripts=document.getElementsByTagName?document.getElementsByTagName('script'):[];
+    for(var i=0;i<scripts.length;i++){
+      var m=/cineby-ws-tv@([0-9a-f]{40}|main)\/tv\.js/.exec(scripts[i].src||'');
+      if(m)return m[1];
+    }
+    return '';
+  }
+  function checkForUpdate(isWatching){
+    var now=Date.now(),last=0;
+    try{last=Number(window.localStorage.getItem(CHECK_KEY))||0;}catch(ignore){}
+    var age=now-last;
+    if(age>=0&&age<CHECK_EVERY)return;
+    try{window.localStorage.setItem(CHECK_KEY,String(now));}catch(ignore){}
+    var current=runningRef();
+    if(!current)return; // not started by our loader (e.g. a test page)
+    try{
+      var xhr=new XMLHttpRequest();
+      xhr.open('GET','https://api.github.com/repos/ystas97/cineby-ws-tv/commits/main',true);
+      xhr.timeout=6000;
+      xhr.onload=function(){
+        if(xhr.status!==200)return;
+        var sha='';try{sha=JSON.parse(xhr.responseText).sha||'';}catch(ignore){}
+        if(!/^[0-9a-f]{40}$/.test(sha)||sha===current)return;
+        try{window.localStorage.setItem(UPDATE_KEY,JSON.stringify({sha:sha,time:Date.now()}));}catch(ignore){return;}
+        var done='';try{done=window.sessionStorage.getItem('cbws-updated-to')||'';}catch(ignore){}
+        if(done===sha)return;
+        if(isWatching()){hint('Cineby TV update ready · it applies after this video');return;}
+        try{window.sessionStorage.setItem('cbws-updated-to',sha);}catch(ignore){}
+        hint('Updating Cineby TV…');
+        setTimeout(function(){if(!isWatching())window.location.reload();},1500);
+      };
+      xhr.send();
+    }catch(ignore){}
+  }
   function start(){
     initStyle();
     installPopupGuard(window,document,onCineby,function(){hint('Pop-up blocked');});
@@ -1734,6 +1778,9 @@
     tvLayout.update();
     ensureActive();
     hint('Пульт активен: стрелки · OK · Назад');
+    var watching=function(){return !!document.getElementById('cbws-tv-player-ui')||!!tvLayout.isPlaying&&tvLayout.isPlaying();};
+    setTimeout(function(){checkForUpdate(watching);},4000);
+    if(typeof setInterval==='function')setInterval(function(){checkForUpdate(watching);},CHECK_EVERY+5000);
   }
 
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);
