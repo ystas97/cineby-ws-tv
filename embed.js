@@ -171,7 +171,7 @@
     // a pointer cursor. Take the outermost such element as one choice.
     function clickablesIn(root) {
       if (!root || !root.querySelectorAll) return [];
-      var all = root.querySelectorAll('*'), out = [];
+      var all = root.querySelectorAll('*'), out = [], plain = [];
       for (var i = 0; i < all.length; i++) {
         var el = all[i];
         if (el.tagName === 'svg' || el.tagName === 'path' || el.namespaceURI === 'http://www.w3.org/2000/svg') continue;
@@ -184,9 +184,13 @@
           if (parent && parent !== root && window.getComputedStyle(parent).cursor === 'pointer') continue;
         }
         if (!isVisible(el)) continue;
+        // Skip parts of a plain clickable block already taken, but keep
+        // choices placed inside a real button (popup menus nested in it).
         var nested = false;
-        for (var j = 0; j < out.length; j++) if (out[j].contains(el)) { nested = true; break; }
-        if (!nested) out.push(el);
+        for (var j = 0; j < plain.length; j++) if (plain[j].contains(el)) { nested = true; break; }
+        if (nested) continue;
+        out.push(el);
+        if (!match) plain.push(el);
       }
       return out;
     }
@@ -242,8 +246,11 @@
       var el = active, before = visibleMenu(), wasInPopup = inPopup(el);
       var known = clickablesIn(document.body);
       press(el);
-      // Follow a menu that just opened (Settings → Quality → 720p …).
-      window.setTimeout(function () {
+      // Follow a menu that just opened (Settings → Quality → 720p …). Menus
+      // may fade in, so look again a little later if nothing showed yet.
+      var tries = 0;
+      function settle() {
+        tries++;
         var after = visibleMenu();
         if (after && after !== before) {
           if (!openMenu(el)) opener = el;
@@ -259,6 +266,7 @@
           setActive(preferred(popupItems().length ? popupItems() : fresh));
           return;
         }
+        if (!wasInPopup && isVisible(el) && tries < 3) { window.setTimeout(settle, 180); return; }
         if (wasInPopup && !popupItems().length) {
           // A choice closed its popup (e.g. subtitles picked).
           var back = popup.opener; popup = null;
@@ -275,7 +283,8 @@
           if (!visibleMenu() && opener && isVisible(opener)) { setActive(opener); opener = null; }
           else ensureActive();
         }
-      }, 120);
+      }
+      window.setTimeout(settle, 120);
     }
     function sendEscape() {
       var target = active || document.activeElement || document.body;
