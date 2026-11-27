@@ -518,7 +518,7 @@
         subs.push({id: -1, label: 'Off'});
         for (i = 0; i < list.length; i++) {
           subs.push({id: i, label: String(list[i].label || list[i].language || 'Track ' + (i + 1))});
-          if (list[i].mode === 'showing') sub = i;
+          if (list[i].mode === 'showing' || list[i] === subTrack) sub = i;
         }
         if (subs.length === 1) subs = [];
       }
@@ -528,11 +528,36 @@
       var jw = jwApi();
       if (jw) { try { jw.setCurrentQuality(id); } catch (ignore) {} }
     }
+    // Players other than JW often hide the browser's own subtitle rendering
+    // and draw subtitles themselves only for their own menu. Draw the chosen
+    // track here: the cue text, large, at the bottom of the picture.
+    var subBox = null, subTrack = null;
+    function drawCue() {
+      if (!subBox || !subTrack) return;
+      var cues = subTrack.activeCues, text = [];
+      for (var i = 0; cues && i < cues.length; i++) text.push(String(cues[i].text || '').replace(/<[^>]*>/g, ''));
+      subBox.textContent = text.join('\n');
+      subBox.style.display = text.length ? 'block' : 'none';
+    }
+    function stopSubs() {
+      if (subTrack) { try { subTrack.removeEventListener('cuechange', drawCue); } catch (ignore) {} subTrack = null; }
+      if (subBox && subBox.parentNode) subBox.parentNode.removeChild(subBox);
+      subBox = null;
+    }
     function setSub(id) {
       var jw = jwApi();
       if (jw) { try { jw.setCurrentCaptions(id); } catch (ignore) {} return; }
       var list = textTracks(video());
-      for (var i = 0; i < list.length; i++) list[i].mode = i === id ? 'showing' : 'disabled';
+      stopSubs();
+      for (var i = 0; i < list.length; i++) list[i].mode = i === id ? 'hidden' : 'disabled';
+      if (id < 0 || !list[id]) return;
+      subTrack = list[id];
+      subBox = document.createElement('div');
+      subBox.style.cssText = 'position:fixed;left:8%;right:8%;bottom:11%;z-index:2147483647;text-align:center;white-space:pre-line;pointer-events:none;display:none;' +
+        'font:600 4.4vh/1.25 Arial,Helvetica,sans-serif;color:#fff;text-shadow:0 0 4px #000,0 2px 3px #000,0 0 10px rgba(0,0,0,.8);';
+      (document.body || document.documentElement).appendChild(subBox);
+      subTrack.addEventListener('cuechange', drawCue);
+      drawCue();
     }
     function seekTo(t) {
       var v = video();
