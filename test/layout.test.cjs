@@ -173,7 +173,7 @@ test('external iframe opens full-screen right after Play Now and stays in the na
   assert.ok(hud,'The player opens without a separate Enlarge step.');
   assert.ok(fixture.media().classList.contains('cbws-theatre-media'));
   assert.ok(main.contains(fixture.media()));
-  assert.ok(hud.textContent.includes('embedded player’s own controls'));
+  assert.ok(hud.textContent.includes('quality, subtitles'));
   assert.equal(document.activeElement,hud.querySelector('.cbws-player-primary'));
 });
 test('one OK on Play Now presses the original big play button and opens the player',()=>{

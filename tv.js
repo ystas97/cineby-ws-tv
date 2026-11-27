@@ -796,12 +796,12 @@
         updateStatus();
       }else{
         var row=add(bottom,'div','cbws-player-controls');
-        defaultPlayerFocus=button(row,'cbws-player-button cbws-player-primary','▶  Player controls',function(){enterFrame(el);});
+        defaultPlayerFocus=button(row,'cbws-player-button cbws-player-primary','⚙  Quality · Subtitles',function(){enterFrame(el);});
         if(serverTabs().length>1){
           var serverButton=button(row,'cbws-player-button',serverLabel(),function(){nextServer();serverButton.textContent=serverLabel();});
         }
         button(row,'cbws-player-button','Original page',closeTheatre);
-        add(bottom,'p','cbws-player-note','OK opens the embedded player’s own controls. Back returns to the title.');
+        add(bottom,'p','cbws-player-note','OK opens the player’s own menu: quality, subtitles, audio. Back returns here, then to the title.');
       }
       document.body.appendChild(playerUI);
       clearFocus();if(defaultPlayerFocus)setActive(defaultPlayerFocus,false);else ensureActive();
@@ -1051,24 +1051,53 @@
       hidePlayerOverlay();
       try{frame.focus();}catch(ignore){}
       frameFocused();
-      hint('Player controls for a few seconds · then Back returns to the title');
+      hint('Arrows · OK  choose quality, subtitles  ·  Back  return');
     }
     // A cross-origin player swallows every remote key, including Return, while
     // it has focus. Give the focus back to the page after a short while so the
     // Return key and the overlay keep working.
-    var frameTimer=0;
+    var frameTimer=0,helperFrames=[];
+    function helperIn(frame){
+      if(!frame)return false;
+      for(var i=0;i<helperFrames.length;i++)if(helperFrames[i]===frame.contentWindow)return true;
+      return false;
+    }
+    function reclaimFocus(){
+      var current=document.activeElement;
+      if(current&&current.tagName==='IFRAME')try{current.blur();}catch(ignore){}
+      try{window.focus();}catch(ignore){}
+      var target=theatre&&playerUI?playerUI.querySelector('.cbws-player-primary'):null;
+      if(target){clearFocus();setActive(target,false);wakePlayer();}
+      else ensureActive();
+    }
     function frameFocused(){
       if(frameTimer)clearTimeout(frameTimer);
+      frameTimer=0;
+      var current=document.activeElement;
+      // With the in-player helper (embed.js) the remote works inside the
+      // player and Return comes back through a message, so no timer.
+      if(current&&current.tagName==='IFRAME'&&helperIn(current))return;
       frameTimer=setTimeout(function(){
         frameTimer=0;
-        var current=document.activeElement;
-        if(!current||current.tagName!=='IFRAME')return;
-        try{current.blur();}catch(ignore){}
-        try{window.focus();}catch(ignore){}
-        var target=theatre&&playerUI?playerUI.querySelector('.cbws-player-primary'):null;
-        if(target){clearFocus();setActive(target,false);wakePlayer();}
-        else ensureActive();
+        var now=document.activeElement;
+        if(!now||now.tagName!=='IFRAME'||helperIn(now))return;
+        reclaimFocus();
       },8000);
+    }
+    // Messages from embed.js running inside a player frame of this page.
+    function onFrameMessage(event){
+      var data=event&&event.data;
+      if(!data||typeof data!=='object'||(data.cbws!=='embed-ready'&&data.cbws!=='exit'))return;
+      var frames=document.querySelectorAll('iframe'),frame=null;
+      for(var i=0;i<frames.length;i++)if(frames[i].contentWindow===event.source){frame=frames[i];break;}
+      if(!frame)return;
+      if(data.cbws==='embed-ready'){
+        if(!helperIn(frame))helperFrames.push(frame.contentWindow);
+        if(document.activeElement===frame&&frameTimer){clearTimeout(frameTimer);frameTimer=0;}
+        return;
+      }
+      // Return pressed in the player with no menu open: back to our overlay.
+      reclaimFocus();
     }
     // cineby.ws has fixed ids for its player: #player (section), #playerPlayBtn
     // (big play button over the poster) and #video-player (the embed iframe).
@@ -1171,7 +1200,7 @@
       render(groups);
     }
     function getRoot(){return playerUI&&playerUI.parentNode?playerUI:root&&root.parentNode?root:null;}
-    return {update:update,getRoot:getRoot,back:navigateBack,focused:focusHero,move:moveLayout,openLink:openLink,beginNativePlay:beginNativePlay,enterFrame:enterFrame,previewActivated:previewActivated,observeNativePlayClick:observeNativePlayClick,wakePlayer:wakePlayer,frameFocused:frameFocused};
+    return {update:update,getRoot:getRoot,back:navigateBack,focused:focusHero,move:moveLayout,openLink:openLink,beginNativePlay:beginNativePlay,enterFrame:enterFrame,previewActivated:previewActivated,observeNativePlayClick:observeNativePlayClick,wakePlayer:wakePlayer,frameFocused:frameFocused,onFrameMessage:onFrameMessage};
 
   }
 
@@ -1503,6 +1532,7 @@
     // Focus can also enter the embedded player without our OK (a click or
     // the player focusing itself); keep Return reachable in that case too.
     window.addEventListener('blur',function(){setTimeout(function(){var el=document.activeElement;if(el&&el.tagName==='IFRAME')tvLayout.frameFocused();},0);});
+    window.addEventListener('message',function(event){tvLayout.onFrameMessage(event);});
     window.addEventListener('resize',scheduleRefresh);
     window.addEventListener('popstate',scheduleRefresh);
     window.addEventListener('hashchange',scheduleRefresh);
