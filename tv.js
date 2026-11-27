@@ -615,7 +615,9 @@
     function addFooter(stage){
       var footer=add(stage,'footer','cbws-footer');
       add(footer,'span','','↑ ↓ ← →  Navigate     ·     OK  Select     ·     Back  Return');
-      add(footer,'span','','TV EDITION  1.5.3  /  CINEBY.WS');
+      var info=window.__cbwsLoaderInfo,build='';
+      if(info&&info.ref)build='  ·  '+String(info.ref).slice(0,7)+(info.via?' ('+info.via+')':'');
+      add(footer,'span','','TV EDITION  1.5.4'+build+'  /  CINEBY.WS');
     }
     function pageLinks(currentPath) {
       var out=[], seen={};

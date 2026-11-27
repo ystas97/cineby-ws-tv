@@ -17,7 +17,8 @@
   'use strict';
   var REPO = 'ystas97/cineby-ws-tv';
   var KEY = 'cbws-loader-ref';
-  var TTL = 5 * 60 * 1000;
+  var TTL = 5 * 60 * 1000;          // reuse a commit id this long without asking GitHub
+  var STALE = 6 * 60 * 60 * 1000;   // if GitHub cannot be reached, trust a saved id at most this long
   var SHA = /^[0-9a-f]{40}$/;
 
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -37,6 +38,12 @@
   else return;
   window.__cinebyWsLoader = true;
 
+  // Age of a saved commit id. A TV clock that is behind (common right after
+  // a reboot, before network time) gives a negative age: treat it as old.
+  function age(data) {
+    var a = Date.now() - data.time;
+    return a >= 0 ? a : Infinity;
+  }
   function readCache() {
     try {
       var data = JSON.parse(window.localStorage.getItem(KEY) || 'null');
@@ -59,16 +66,18 @@
   }
 
   // The commit this tab runs, shared with player frames.
-  var chosen = '', waiting = [];
+  var chosen = '', via = '', waiting = [];
   function answer(target) {
     try { target.postMessage({cbws: 'ref', sha: chosen}, '*'); } catch (ignore) {}
   }
-  function use(ref) {
+  function use(ref, how) {
     if (chosen) return;
-    chosen = ref;
+    chosen = ref; via = how || '';
+    // Shown in the TV footer to see which version runs and why.
+    window.__cbwsLoaderInfo = {ref: ref, via: via, file: file};
     for (var i = 0; i < waiting.length; i++) answer(waiting[i]);
     waiting = [];
-    inject(ref, ref === 'main' ? null : function () { inject('main', null); });
+    inject(ref, ref === 'main' ? null : function () { window.__cbwsLoaderInfo.via += ', cdn fallback'; inject('main', null); });
   }
   if (file === 'tv.js') {
     window.addEventListener('message', function (event) {
@@ -83,8 +92,9 @@
     function finish(sha) {
       if (done) return;
       done = true;
-      if (sha) { writeCache(sha); use(sha); }
-      else use(cached ? cached.sha : 'main');
+      if (sha) { writeCache(sha); use(sha, 'github'); }
+      else if (cached && age(cached) < STALE) use(cached.sha, 'saved');
+      else use('main', 'cdn');
     }
     try {
       var xhr = new XMLHttpRequest();
@@ -105,7 +115,7 @@
   }
   function resolveOwn() {
     var cached = readCache();
-    if (cached && Date.now() - cached.time < TTL) use(cached.sha);
+    if (cached && age(cached) < TTL) use(cached.sha, 'recent');
     else lookup(cached);
   }
 
@@ -117,7 +127,7 @@
       var data = event.data;
       if (chosen || !data || data.cbws !== 'ref' || event.source !== window.top) return;
       if (timer) window.clearTimeout(timer);
-      use(SHA.test(data.sha) || data.sha === 'main' ? data.sha : 'main');
+      use(SHA.test(data.sha) || data.sha === 'main' ? data.sha : 'main', 'page');
     });
     try { window.top.postMessage({cbws: 'ref?'}, '*'); } catch (ignore) {}
     timer = window.setTimeout(function () { if (!chosen) resolveOwn(); }, 1500);

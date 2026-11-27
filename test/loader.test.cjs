@@ -37,7 +37,7 @@ test('a stale commit id is refreshed',()=>{
   assert.ok(r.scripts[0].includes(SHA));
 });
 test('GitHub unavailable: falls back to the last known commit, then to main',()=>{
-  const withCache=run({fail:true,storage:{'cbws-loader-ref':JSON.stringify({sha:OLD,time:0})}});
+  const withCache=run({fail:true,storage:{'cbws-loader-ref':JSON.stringify({sha:OLD,time:Date.now()-60*1000})}});
   assert.ok(withCache.scripts[0].includes(OLD));
   const rateLimited=run({status:403,body:'{"message":"rate limit"}'});
   assert.deepEqual(rateLimited.scripts,['https://cdn.jsdelivr.net/gh/ystas97/cineby-ws-tv@main/tv.js']);
@@ -74,4 +74,20 @@ test('player frame ignores replies from other windows and falls back to its own 
 test('frames of other sites are left alone',()=>{
   const r=run({frame:true,hostname:'ads.example',ancestors:['https://news.example']});
   assert.equal(r.scripts.length+r.requests.length+r.timers.length,0);
+});
+test('a TV clock behind the saved time does not keep an old version',()=>{
+  const r=run({storage:{'cbws-loader-ref':JSON.stringify({sha:OLD,time:Date.now()+24*3600*1000})}});
+  assert.equal(r.requests.length,1,'GitHub is asked again.');
+  assert.ok(r.scripts[0].includes(SHA));
+  assert.equal(r.window.__cbwsLoaderInfo.via,'github');
+});
+test('GitHub unreachable: a saved id older than 6 h is not trusted, the branch is used',()=>{
+  const r=run({fail:true,storage:{'cbws-loader-ref':JSON.stringify({sha:OLD,time:Date.now()-7*3600*1000})}});
+  assert.deepEqual(r.scripts,['https://cdn.jsdelivr.net/gh/ystas97/cineby-ws-tv@main/tv.js']);
+  assert.equal(r.window.__cbwsLoaderInfo.via,'cdn');
+});
+test('GitHub unreachable: a saved id from the last hours is used and reported',()=>{
+  const r=run({fail:true,storage:{'cbws-loader-ref':JSON.stringify({sha:OLD,time:Date.now()-30*60*1000})}});
+  assert.ok(r.scripts[0].includes(OLD));
+  assert.equal(r.window.__cbwsLoaderInfo.via,'saved');
 });
