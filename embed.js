@@ -553,9 +553,18 @@
       if (id < 0 || !list[id]) return;
       subTrack = list[id];
       subBox = document.createElement('div');
-      subBox.style.cssText = 'position:fixed;left:8%;right:8%;bottom:11%;z-index:2147483647;text-align:center;white-space:pre-line;pointer-events:none;display:none;' +
+      subBox.style.cssText = 'position:absolute;left:8%;right:8%;bottom:11%;z-index:2147483647;text-align:center;white-space:pre-line;pointer-events:none;display:none;' +
         'font:600 4.4vh/1.25 Arial,Helvetica,sans-serif;color:#fff;text-shadow:0 0 4px #000,0 2px 3px #000,0 0 10px rgba(0,0,0,.8);';
-      (document.body || document.documentElement).appendChild(subBox);
+      // Put it right next to the video, in the same layer as the picture;
+      // players often lift the video above everything else on the page.
+      var v = video(), holder = v && v.parentNode;
+      if (holder && holder.nodeType === 1) {
+        try { if (window.getComputedStyle(holder).position === 'static') holder.style.position = 'relative'; } catch (ignore) {}
+        if (v.nextSibling) holder.insertBefore(subBox, v.nextSibling); else holder.appendChild(subBox);
+      } else {
+        subBox.style.position = 'fixed';
+        (document.body || document.documentElement).appendChild(subBox);
+      }
       subTrack.addEventListener('cuechange', drawCue);
       drawCue();
     }
