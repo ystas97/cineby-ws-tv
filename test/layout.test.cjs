@@ -186,16 +186,24 @@ test('one OK on Play Now presses the original big play button and opens the play
   assert.ok(hud);
   assert.ok(fixture.media().classList.contains('cbws-theatre-media'));
 });
-test('the full-screen overlay fades and the first key only brings it back',()=>{
-  const fixture=pageFixture({detail:true,iframe:true});
-  const {document,key}=fixture;
+test('with the panel hidden, arrows seek and OK pauses; up brings the panel back',()=>{
+  const fixture=pageFixture({detail:true});
+  const {document,key,runTimers}=fixture;
   key(13);
   const hud=document.getElementById('cbws-tv-player-ui');
-  hud.querySelector('.cbws-player-primary').click();
-  assert.ok(hud.classList.contains('cbws-player-idle'));
-  document.activeElement=hud.querySelector('.cbws-player-primary');
+  const video=fixture.media();
+  video.play();
+  runTimers(4500);
+  assert.ok(hud.classList.contains('cbws-player-idle'),'The panel fades while the video plays.');
   key('ArrowRight');
-  assert.ok(!hud.classList.contains('cbws-player-idle'));
+  assert.equal(video.currentTime,10);
+  key('ArrowLeft');key('ArrowLeft');
+  assert.equal(video.currentTime,0);
+  key(13);
+  assert.equal(video.paused,true,'OK pauses.');
+  assert.ok(hud.classList.contains('cbws-player-idle'));
+  key('ArrowUp');
+  assert.ok(!hud.classList.contains('cbws-player-idle'),'Up shows the panel.');
 });
 test('focus returns from the embedded player so Return closes it',()=>{
   const fixture=pageFixture({detail:true,iframe:true});

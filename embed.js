@@ -357,6 +357,8 @@
     }
     function move(direction) {
       if (!ensureActive()) return;
+      // On the progress bar, left/right seek instead of leaving it.
+      if (isSlider(active) && (direction === 'left' || direction === 'right')) { media(direction === 'left' ? 'rewind' : 'forward'); return; }
       var pool;
       if (inPopup(active)) pool = popupItems();
       else {
@@ -458,19 +460,34 @@
       try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (ignore) {}
       try { window.parent.postMessage({cbws: 'exit'}, '*'); } catch (ignore) {}
     }
+    // Play/pause and ±10 s on the player's own video. JW Player is driven
+    // through its API so its interface stays in sync. With no video in this
+    // document (the real player sits in a nested frame), pass it down.
     function media(action) {
       var v = video();
-      if (!v) return false;
+      if (!v) {
+        var frames = document.querySelectorAll('iframe');
+        for (var f = 0; f < frames.length; f++) post(frames[f].contentWindow, {cbws: 'key', action: action});
+        return frames.length > 0;
+      }
+      var jw = null;
+      try { if (typeof window.jwplayer === 'function') { jw = window.jwplayer(); if (!jw || typeof jw.seek !== 'function') jw = null; } } catch (ignore) { jw = null; }
       try {
-        if (action === 'toggle') { if (v.paused) v.play(); else v.pause(); }
-        else if (action === 'play') v.play();
-        else if (action === 'pause') v.pause();
-        else if (action === 'forward' || action === 'rewind') {
+        if (action === 'toggle' || action === 'play' || action === 'pause') {
+          var play = action === 'play' || (action === 'toggle' && v.paused);
+          if (jw) { if (play) jw.play(); else jw.pause(); }
+          else if (play) { var p = v.play(); if (p && typeof p.catch === 'function') p.catch(function () {}); }
+          else v.pause();
+        } else if (action === 'forward' || action === 'rewind') {
           var t = v.currentTime + (action === 'forward' ? 10 : -10);
-          v.currentTime = Math.max(0, isFinite(v.duration) ? Math.min(t, v.duration) : t);
+          t = Math.max(0, isFinite(v.duration) ? Math.min(t, v.duration - 1) : t);
+          if (jw) jw.seek(t); else v.currentTime = t;
         }
       } catch (ignore) {}
       return true;
+    }
+    function isSlider(el) {
+      return !!el && (el.getAttribute('role') === 'slider' || (el.tagName === 'INPUT' && String(el.type).toLowerCase() === 'range'));
     }
     function run(action) {
       // A nested player frame has the remote: pass the key on.

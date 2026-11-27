@@ -617,7 +617,7 @@
       add(footer,'span','','↑ ↓ ← →  Navigate     ·     OK  Select     ·     Back  Return');
       var info=window.__cbwsLoaderInfo,build='';
       if(info&&info.ref)build='  ·  '+String(info.ref).slice(0,7)+(info.via?' ('+info.via+')':'');
-      add(footer,'span','','TV EDITION  1.5.6'+build+'  /  CINEBY.WS');
+      add(footer,'span','','TV EDITION  1.5.7'+build+'  /  CINEBY.WS');
     }
     function pageLinks(currentPath) {
       var out=[], seen={};
@@ -931,6 +931,9 @@
         updateStatus();
       }else{
         var row=add(bottom,'div','cbws-player-controls');
+        button(row,'cbws-player-button','↶ 10 s',function(){playerMedia('rewind');});
+        button(row,'cbws-player-button','⏯',function(){playerMedia('toggle');});
+        button(row,'cbws-player-button','10 s ↷',function(){playerMedia('forward');});
         defaultPlayerFocus=button(row,'cbws-player-button cbws-player-primary','⚙  Quality · Subtitles',function(){enterFrame(el);});
         theatre.controlsButton=defaultPlayerFocus;
         // Ask the player frame whether its helper runs (again after each load).
@@ -942,7 +945,7 @@
           var serverButton=button(row,'cbws-player-button',serverLabel(),function(){nextServer();serverButton.textContent=serverLabel();});
         }
         button(row,'cbws-player-button','Original page',closeTheatre);
-        add(bottom,'p','cbws-player-note','OK opens the player’s own menu: quality, subtitles, audio. Back returns here, then to the title.');
+        add(bottom,'p','cbws-player-note','◀ ▶ seek 10 s and OK pauses while this panel is hidden. ⚙ opens the player’s menu: quality, subtitles. Back returns here, then to the title.');
       }
       document.body.appendChild(playerUI);
       clearFocus();if(defaultPlayerFocus)setActive(defaultPlayerFocus,false);else ensureActive();
@@ -959,6 +962,27 @@
         if(theatre.media.tagName==='VIDEO'&&theatre.media.paused){scheduleIdle();return;}
         theatre.idle=true;playerUI.classList.add('cbws-player-idle');
       },4500);
+    }
+    // Play/pause and ±10 s for whatever player is open: our own handling
+    // for a page video, a message to the helper inside an embedded player.
+    var seekHintTimer=0;
+    function playerMedia(action){
+      if(!theatre)return false;
+      var el=theatre.media;
+      var label=action==='forward'?'⏩  +10 s':action==='rewind'?'⏪  −10 s':'⏯';
+      if(el.tagName==='VIDEO'){media(action);}
+      else if(helperIn(el)){post(el,{cbws:'key',action:action});}
+      else{hint('This player does not support the remote here · try another server');return true;}
+      hint(label);
+      return true;
+    }
+    // Netflix-style: with the panel hidden, left/right seek and OK pauses;
+    // up/down bring the panel back.
+    function idleKey(action){
+      if(!theatre||!theatre.idle||controlFrame)return false;
+      if(action==='left'||action==='right'){playerMedia(action==='left'?'rewind':'forward');return true;}
+      if(action==='ok'){playerMedia('toggle');return true;}
+      return false;
     }
     function wakePlayer(){
       if(!theatre||!playerUI)return false;
@@ -1380,7 +1404,7 @@
       render(groups);
     }
     function getRoot(){return playerUI&&playerUI.parentNode?playerUI:root&&root.parentNode?root:null;}
-    return {update:update,getRoot:getRoot,back:navigateBack,focused:focusHero,move:moveLayout,openLink:openLink,beginNativePlay:beginNativePlay,enterFrame:enterFrame,previewActivated:previewActivated,observeNativePlayClick:observeNativePlayClick,wakePlayer:wakePlayer,frameFocused:frameFocused,onFrameMessage:onFrameMessage,forwardKey:forwardKey,isPlaying:function(){return !!(theatre||playSession||playRequest);}};
+    return {update:update,getRoot:getRoot,back:navigateBack,focused:focusHero,move:moveLayout,openLink:openLink,beginNativePlay:beginNativePlay,enterFrame:enterFrame,previewActivated:previewActivated,observeNativePlayClick:observeNativePlayClick,wakePlayer:wakePlayer,frameFocused:frameFocused,onFrameMessage:onFrameMessage,forwardKey:forwardKey,idleKey:idleKey,playerMedia:playerMedia,isPlaying:function(){return !!(theatre||playSession||playRequest);}};
 
   }
 
@@ -1670,9 +1694,14 @@
     if(el&&el.tagName==='SELECT'&&['left','right','up','down','ok'].indexOf(action)!==-1)return;
     if(el&&el.tagName==='INPUT'&&el.type==='range'&&(action==='left'||action==='right'))return;
     if(event.defaultPrevented&&!tvLayout.getRoot())return;
-    // Full-screen player: the first key only brings back the faded overlay.
+    // Full-screen player with its panel hidden: arrows seek, OK pauses.
+    if(tvLayout.idleKey(action)){consumeKey(event);return;}
+    // Otherwise the first key only brings back the faded overlay.
     if(tvLayout.wakePlayer()&&['left','right','up','down','ok'].indexOf(action)!==-1){consumeKey(event);return;}
-    if(['toggle','play','pause','stop','forward','rewind'].indexOf(action)!==-1){if(media(action))consumeKey(event);return;}
+    if(['toggle','play','pause','stop','forward','rewind'].indexOf(action)!==-1){
+      if(tvLayout.playerMedia(action==='stop'?'pause':action)||media(action))consumeKey(event);
+      return;
+    }
     if(action==='ok'){consumeKey(event);activate();return;}
     if(Date.now()-lastDirection<65){consumeKey(event);return;}
     lastDirection=Date.now();navigationMode=true;consumeKey(event);move(action);
