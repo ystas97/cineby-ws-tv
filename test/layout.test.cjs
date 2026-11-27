@@ -92,7 +92,8 @@ function pageFixture(options={}){
   vm.runInNewContext(source,context);
   function flush(){for(let i=0;i<8;i++){const next=[...timerQueue].find(([id,t])=>t.delay<=500);if(!next)break;timerQueue.delete(next[0]);next[1].fn();}}
   function key(value){for(const fn of document.listeners.keydown)fn({keyCode:typeof value==='number'?value:undefined,key:typeof value==='string'?value:undefined,preventDefault(){},stopPropagation(){}});}
-  return {document,main,input,play,flush,window,key,media:()=>mediaNode,preview:()=>previewControl};
+  function runTimers(max){for(const [id,t] of [...timerQueue]){if(t.delay<=max){timerQueue.delete(id);t.fn();}}}
+  return {document,main,input,play,flush,runTimers,window,key,media:()=>mediaNode,preview:()=>previewControl};
 }
 test('browse shell builds six poster cards in two rails and preserves native content',()=>{
   const {document,main}=pageFixture();
@@ -152,30 +153,51 @@ test('title page builds cinematic details and uses the original Play button',()=
   assert.equal(document.getElementById('cbws-tv-player-ui'),null);
   assert.ok(!fixture.media().classList.contains('cbws-theatre-media'));
 });
-test('external iframe remains in the native page and theatre is opt-in',()=>{
+test('external iframe opens full-screen right after Play Now and stays in the native page',()=>{
   const fixture=pageFixture({detail:true,iframe:true});
   const {document,main,flush}=fixture;
   document.getElementById('cbws-tv-screen').querySelector('.cbws-detail-actions').children[0].click();
   flush();
-  assert.equal(document.getElementById('cbws-tv-player-ui'),null);
-  assert.ok(main.contains(fixture.media()));
-  const enlarge=document.getElementById('cbws-tv-player-toggle');
-  assert.ok(enlarge);enlarge.click();
   const hud=document.getElementById('cbws-tv-player-ui');
-  assert.ok(hud);assert.ok(main.contains(fixture.media()));
-  assert.ok(hud.textContent.includes('Use the embedded player’s own controls.'));
+  assert.ok(hud,'The player opens without a separate Enlarge step.');
+  assert.ok(fixture.media().classList.contains('cbws-theatre-media'));
+  assert.ok(main.contains(fixture.media()));
+  assert.ok(hud.textContent.includes('embedded player’s own controls'));
+  assert.equal(document.activeElement,hud.querySelector('.cbws-player-primary'));
 });
-test('Play Now moves the remote focus to the original large preview play control',()=>{
+test('one OK on Play Now presses the original big play button and opens the player',()=>{
   const fixture=pageFixture({detail:true,preview:true});
   const {document,key}=fixture;
   key(13);
   assert.ok(fixture.preview());
-  assert.equal(document.activeElement,fixture.preview());
-  assert.ok(fixture.preview().classList.contains('cbws-tv-focus'));
-  assert.equal(fixture.media(),undefined);
+  assert.ok(fixture.media(),'No second OK is needed.');
+  const hud=document.getElementById('cbws-tv-player-ui');
+  assert.ok(hud);
+  assert.ok(fixture.media().classList.contains('cbws-theatre-media'));
+});
+test('the full-screen overlay fades and the first key only brings it back',()=>{
+  const fixture=pageFixture({detail:true,iframe:true});
+  const {document,key}=fixture;
   key(13);
-  assert.ok(fixture.media());
-  assert.ok(document.getElementById('cbws-tv-player-ui'));
+  const hud=document.getElementById('cbws-tv-player-ui');
+  hud.querySelector('.cbws-player-primary').click();
+  assert.ok(hud.classList.contains('cbws-player-idle'));
+  document.activeElement=hud.querySelector('.cbws-player-primary');
+  key('ArrowRight');
+  assert.ok(!hud.classList.contains('cbws-player-idle'));
+});
+test('focus returns from the embedded player so Return closes it',()=>{
+  const fixture=pageFixture({detail:true,iframe:true});
+  const {document,key,runTimers}=fixture;
+  key(13);
+  const hud=document.getElementById('cbws-tv-player-ui');
+  hud.querySelector('.cbws-player-primary').click();
+  assert.equal(document.activeElement,fixture.media(),'OK enters the player controls.');
+  runTimers(8000);
+  assert.equal(document.activeElement,hud.querySelector('.cbws-player-primary'));
+  fixture.window.location.reload=function(){this.reloaded=true;};
+  key(10009);
+  assert.equal(document.getElementById('cbws-tv-player-ui'),null,'Return leaves the player.');
 });
 test('Samsung Return goes from the preview to title then from title to browse',()=>{
   const fixture=pageFixture({detail:true,preview:true});
