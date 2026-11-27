@@ -374,7 +374,7 @@
     }
     function activate() {
       if (!ensureActive()) { media('toggle'); return; }
-      if (active.tagName === 'IFRAME') { try { active.focus(); } catch (ignore) {} return; }
+      if (active.tagName === 'IFRAME') { enterChild(active); return; }
       if (active.tagName === 'VIDEO') { media('toggle'); return; }
       var el = active, before = visibleMenu(), wasInPopup = inPopup(el);
       var known = clickablesIn(document.body);
@@ -472,6 +472,18 @@
       } catch (ignore) {}
       return true;
     }
+    function run(action) {
+      // A nested player frame has the remote: pass the key on.
+      if (child) { sendToChild(action); return; }
+      wake();
+      // Give the player a moment to show its controls before measuring them.
+      window.setTimeout(function () {
+        if (action === 'back') back();
+        else if (action === 'ok') activate();
+        else if (action === 'left' || action === 'right' || action === 'up' || action === 'down') move(action);
+        else media(action);
+      }, 30);
+    }
     function onKey(event) {
       if (event.__cbwsSynthetic || event.__cbwsHandled) return;
       var action = keyAction(event);
@@ -482,34 +494,63 @@
       try { event.__cbwsHandled = true; } catch (ignore) {}
       if (event.preventDefault) event.preventDefault();
       if (event.stopImmediatePropagation) event.stopImmediatePropagation();
-      wake();
-      // Give the player a moment to show its controls before measuring them.
-      window.setTimeout(function () {
-        if (action === 'back') back();
-        else if (action === 'ok') activate();
-        else if (action === 'left' || action === 'right' || action === 'up' || action === 'down') move(action);
-        else media(action);
-      }, 30);
+      run(action);
     }
+    // TV browsers may not move keyboard focus into a cross-origin frame, so
+    // the page around the player keeps the focus and sends each remote key
+    // here as a message ({cbws:'key'}); every key is acknowledged.
+    var child = null, childTimer = 0;
+    function post(target, data) { try { target.postMessage(data, '*'); } catch (ignore) {} }
+    function enterChild(frame) {
+      child = frame;
+      post(frame.contentWindow, {cbws: 'control'});
+      try { frame.focus(); } catch (ignore) {}
+    }
+    function leaveChild() {
+      var frame = child;
+      child = null;
+      if (childTimer) { window.clearTimeout(childTimer); childTimer = 0; }
+      if (frame) { try { frame.blur(); } catch (ignore) {} setActive(frame); }
+    }
+    function sendToChild(action) {
+      post(child.contentWindow, {cbws: 'key', action: action});
+      if (childTimer) window.clearTimeout(childTimer);
+      // No answer: that frame has no helper, take the remote back.
+      childTimer = window.setTimeout(function () { childTimer = 0; leaveChild(); }, 1200);
+    }
+    function frameOf(source) {
+      var frames = document.querySelectorAll('iframe');
+      for (var i = 0; i < frames.length; i++) if (frames[i].contentWindow === source) return frames[i];
+      return null;
+    }
+    var ACTIONS = /^(left|right|up|down|ok|back|toggle|play|pause|forward|rewind)$/;
     function onMessage(event) {
       var data = event.data;
-      if (data && data.cbws === 'blocked') {
+      if (!data || typeof data !== 'object' || typeof data.cbws !== 'string') return;
+      if (data.cbws === 'blocked') {
         // Relay from a nested player frame up to the cineby page, never to ourselves.
-        if (event.source !== window && window.parent !== window) {
-          try { window.parent.postMessage({cbws: 'blocked'}, '*'); } catch (ignore) {}
+        if (event.source !== window && window.parent !== window) post(window.parent, {cbws: 'blocked'});
+        return;
+      }
+      if (event.source === window.parent && window.parent !== window) {
+        if (data.cbws === 'ping') { post(window.parent, {cbws: 'embed-ready'}); return; }
+        if (data.cbws === 'control') { child = null; onFocus(); return; }
+        if (data.cbws === 'key' && ACTIONS.test(String(data.action))) {
+          post(window.parent, {cbws: 'ack'});
+          run(data.action);
         }
         return;
       }
-      if (!data || data.cbws !== 'exit') return;
-      // A nested player frame handed control back to this one.
-      var frames = document.querySelectorAll('iframe');
-      for (var i = 0; i < frames.length; i++) {
-        if (frames[i].contentWindow === event.source) {
-          try { frames[i].blur(); } catch (ignore) {}
-          try { window.focus(); } catch (ignore) {}
-          setActive(frames[i]);
-          return;
-        }
+      var frame = frameOf(event.source);
+      if (!frame) return;
+      if (data.cbws === 'ack' && frame === child) {
+        if (childTimer) { window.clearTimeout(childTimer); childTimer = 0; }
+        return;
+      }
+      if (data.cbws === 'exit') {
+        // A nested player frame handed control back to this one.
+        if (frame === child) leaveChild();
+        else { try { frame.blur(); } catch (ignore) {} try { window.focus(); } catch (ignore) {} setActive(frame); }
       }
     }
     function onFocus() {

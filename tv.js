@@ -617,7 +617,7 @@
       add(footer,'span','','↑ ↓ ← →  Navigate     ·     OK  Select     ·     Back  Return');
       var info=window.__cbwsLoaderInfo,build='';
       if(info&&info.ref)build='  ·  '+String(info.ref).slice(0,7)+(info.via?' ('+info.via+')':'');
-      add(footer,'span','','TV EDITION  1.5.4'+build+'  /  CINEBY.WS');
+      add(footer,'span','','TV EDITION  1.5.5'+build+'  /  CINEBY.WS');
     }
     function pageLinks(currentPath) {
       var out=[], seen={};
@@ -876,7 +876,7 @@
     function closeTheatre(){
       if(!theatre)return false;
       var st=theatre;
-      theatre=null;stopPlayerWait();
+      theatre=null;stopPlayerWait();stopControl(false);
       if(st.idleTimer)clearTimeout(st.idleTimer);
       if(st.media)st.media.classList.remove('cbws-theatre-media');
       for(var i=0;i<st.ancestors.length;i++)st.ancestors[i].classList.remove('cbws-theatre-ancestor');
@@ -932,6 +932,12 @@
       }else{
         var row=add(bottom,'div','cbws-player-controls');
         defaultPlayerFocus=button(row,'cbws-player-button cbws-player-primary','⚙  Quality · Subtitles',function(){enterFrame(el);});
+        theatre.controlsButton=defaultPlayerFocus;
+        // Ask the player frame whether its helper runs (again after each load).
+        var ping=function(){post(el,{cbws:'ping'});};
+        ping();el.addEventListener('load',ping);theatre.listeners.push(['load',ping]);
+        setTimeout(ping,1500);
+        setTimeout(function(){if(theatre&&theatre.media===el&&!helperIn(el)&&theatre.controlsButton)theatre.controlsButton.textContent='⚙  Player (no remote)';},5000);
         if(serverTabs().length>1){
           var serverButton=button(row,'cbws-player-button',serverLabel(),function(){nextServer();serverButton.textContent=serverLabel();});
         }
@@ -1181,12 +1187,42 @@
       try{el.click();}catch(ignore){}
       afterPlayRequest();return true;
     }
+    // Remote inside the player. TV browsers may refuse to move keyboard focus
+    // into a cross-origin frame, so the page keeps the focus and forwards each
+    // key to embed.js in the player frame as a message; the helper answers
+    // every key ('ack') and says 'exit' when Return has nothing left to close.
+    var controlFrame=null,ackTimer=0;
+    function post(frame,data){try{frame.contentWindow.postMessage(data,'*');}catch(ignore){}}
+    function controlling(){
+      if(controlFrame&&(!theatre||!document.documentElement.contains(controlFrame)))stopControl(false);
+      return controlFrame;
+    }
+    function stopControl(reclaim){
+      controlFrame=null;
+      if(ackTimer){clearTimeout(ackTimer);ackTimer=0;}
+      if(reclaim)reclaimFocus();
+    }
+    function forwardKey(action){
+      var frame=controlling();
+      if(!frame)return false;
+      post(frame,{cbws:'key',action:action});
+      if(ackTimer)clearTimeout(ackTimer);
+      // No answer (the player reloaded without the helper): take the remote back.
+      ackTimer=setTimeout(function(){ackTimer=0;if(controlFrame){stopControl(true);hint('The player stopped answering the remote');}},1200);
+      return true;
+    }
     function enterFrame(frame){
-      // Let the browser handle its own frame focus; no cross-origin access.
       hidePlayerOverlay();
+      if(helperIn(frame)){
+        controlFrame=frame;
+        post(frame,{cbws:'control'});
+        hint('Arrows · OK  choose quality, subtitles  ·  Back  return');
+        return;
+      }
+      // No helper in this player: hand it the focus and hope it takes it.
       try{frame.focus();}catch(ignore){}
       frameFocused();
-      hint('Arrows · OK  choose quality, subtitles  ·  Back  return');
+      hint('This player does not support the remote here · try another server');
     }
     // A cross-origin player swallows every remote key, including Return, while
     // it has focus. Give the focus back to the page after a short while so the
@@ -1222,18 +1258,20 @@
     // Messages from embed.js running inside a player frame of this page.
     function onFrameMessage(event){
       var data=event&&event.data;
-      if(!data||typeof data!=='object'||(data.cbws!=='embed-ready'&&data.cbws!=='exit'&&data.cbws!=='blocked'))return;
+      if(!data||typeof data!=='object'||(data.cbws!=='embed-ready'&&data.cbws!=='exit'&&data.cbws!=='blocked'&&data.cbws!=='ack'))return;
       var frames=document.querySelectorAll('iframe'),frame=null;
       for(var i=0;i<frames.length;i++)if(frames[i].contentWindow===event.source){frame=frames[i];break;}
       if(!frame)return;
       if(data.cbws==='blocked'){hint('Pop-up blocked');return;}
+      if(data.cbws==='ack'){if(frame===controlFrame&&ackTimer){clearTimeout(ackTimer);ackTimer=0;}return;}
       if(data.cbws==='embed-ready'){
         if(!helperIn(frame))helperFrames.push(frame.contentWindow);
         if(document.activeElement===frame&&frameTimer){clearTimeout(frameTimer);frameTimer=0;}
+        if(theatre&&theatre.media===frame&&theatre.controlsButton)theatre.controlsButton.textContent='⚙  Quality · Subtitles';
         return;
       }
       // Return pressed in the player with no menu open: back to our overlay.
-      reclaimFocus();
+      stopControl(true);
     }
     // cineby.ws has fixed ids for its player: #player (section), #playerPlayBtn
     // (big play button over the poster) and #video-player (the embed iframe).
@@ -1336,7 +1374,7 @@
       render(groups);
     }
     function getRoot(){return playerUI&&playerUI.parentNode?playerUI:root&&root.parentNode?root:null;}
-    return {update:update,getRoot:getRoot,back:navigateBack,focused:focusHero,move:moveLayout,openLink:openLink,beginNativePlay:beginNativePlay,enterFrame:enterFrame,previewActivated:previewActivated,observeNativePlayClick:observeNativePlayClick,wakePlayer:wakePlayer,frameFocused:frameFocused,onFrameMessage:onFrameMessage};
+    return {update:update,getRoot:getRoot,back:navigateBack,focused:focusHero,move:moveLayout,openLink:openLink,beginNativePlay:beginNativePlay,enterFrame:enterFrame,previewActivated:previewActivated,observeNativePlayClick:observeNativePlayClick,wakePlayer:wakePlayer,frameFocused:frameFocused,onFrameMessage:onFrameMessage,forwardKey:forwardKey};
 
   }
 
@@ -1613,6 +1651,8 @@
     if(event.__cbwsHandled)return;
     var action=keyAction(event);
     if(!action)return;
+    // Remote inside the player: every key goes to the player frame.
+    if(['left','right','up','down','ok','back','toggle','play','pause','forward','rewind'].indexOf(action)!==-1&&tvLayout.forwardKey(action)){consumeKey(event);return;}
     var el=document.activeElement,editing=isTextInput(el);
     if(action==='back'){
       if(editing&&(event.key==='Backspace'||event.keyCode===8))return;
