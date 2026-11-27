@@ -1211,12 +1211,18 @@
       ackTimer=setTimeout(function(){ackTimer=0;if(controlFrame){stopControl(true);hint('The player stopped answering the remote');}},1200);
       return true;
     }
-    function enterFrame(frame){
+    function startControl(frame){
+      controlFrame=frame;
+      post(frame,{cbws:'control'});
+      hint('Arrows · OK  choose quality, subtitles  ·  Back  return');
+    }
+    function enterFrame(frame,retried){
       hidePlayerOverlay();
-      if(helperIn(frame)){
-        controlFrame=frame;
-        post(frame,{cbws:'control'});
-        hint('Arrows · OK  choose quality, subtitles  ·  Back  return');
+      if(helperIn(frame)){startControl(frame);return;}
+      if(!retried){
+        // The player may still be loading: ask once more before giving up.
+        post(frame,{cbws:'ping'});
+        setTimeout(function(){if(theatre&&theatre.media===frame)enterFrame(frame,true);},900);
         return;
       }
       // No helper in this player: hand it the focus and hope it takes it.

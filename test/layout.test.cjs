@@ -203,7 +203,8 @@ test('focus returns from the embedded player so Return closes it',()=>{
   key(13);
   const hud=document.getElementById('cbws-tv-player-ui');
   hud.querySelector('.cbws-player-primary').click();
-  assert.equal(document.activeElement,fixture.media(),'OK enters the player controls.');
+  runTimers(900); // the player did not answer the helper ping
+  assert.equal(document.activeElement,fixture.media(),'Without a helper, OK hands the focus to the player.');
   runTimers(8000);
   assert.equal(document.activeElement,hud.querySelector('.cbws-player-primary'));
   fixture.window.location.reload=function(){this.reloaded=true;};
