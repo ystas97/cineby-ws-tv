@@ -532,12 +532,39 @@
     // and draw subtitles themselves only for their own menu. Draw the chosen
     // track here: the cue text, large, at the bottom of the picture.
     var subBox = null, subTrack = null;
+    // Does the player already show this line itself? Then ours would double it.
+    function playerDraws(line) {
+      line = line.replace(/\s+/g, ' ').trim();
+      if (line.length < 2) return false;
+      var nodes = document.querySelectorAll('span,div,p');
+      for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        if (n === subBox || (subBox && subBox.contains(n)) || n.children.length > 2) continue;
+        var t = String(n.textContent || '').replace(/\s+/g, ' ').trim();
+        if (t && t.length < line.length + 40 && t.indexOf(line) >= 0 && isVisible(n)) return true;
+      }
+      return false;
+    }
     function drawCue() {
       if (!subBox || !subTrack) return;
       var cues = subTrack.activeCues, text = [];
       for (var i = 0; cues && i < cues.length; i++) text.push(String(cues[i].text || '').replace(/<[^>]*>/g, ''));
-      subBox.textContent = text.join('\n');
-      subBox.style.display = text.length ? 'block' : 'none';
+      subBox.textContent = '';
+      subBox.style.display = 'none';
+      if (!text.length) return;
+      // Give the player a moment to draw its own line, then decide.
+      window.setTimeout(function () {
+        if (!subBox || !subTrack) return;
+        if (playerDraws(text[0])) { stopDrawing(); return; }
+        subBox.textContent = text.join('\n');
+        subBox.style.display = 'block';
+      }, 120);
+    }
+    // The player renders the chosen track itself: keep the track, drop ours.
+    function stopDrawing() {
+      if (subTrack) { try { subTrack.removeEventListener('cuechange', drawCue); } catch (ignore) {} }
+      if (subBox && subBox.parentNode) subBox.parentNode.removeChild(subBox);
+      subBox = null;
     }
     function stopSubs() {
       if (subTrack) { try { subTrack.removeEventListener('cuechange', drawCue); } catch (ignore) {} subTrack = null; }
