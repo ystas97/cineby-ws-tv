@@ -271,7 +271,23 @@
       "#cbws-tv-player-ui .cbws-player-bottom{padding-top:46px!important;padding-bottom:28px!important;background:linear-gradient(0deg,rgba(0,0,0,.9) 0%,rgba(0,0,0,.55) 60%,rgba(0,0,0,0) 100%)!important;}\n"+
       "#cbws-tv-player-ui.cbws-player-idle .cbws-player-top,#cbws-tv-player-ui.cbws-player-idle .cbws-player-bottom{opacity:0!important;}\n"+
       "#cbws-tv-player-ui .cbws-player-button{background:rgba(38,55,75,.85)!important;}\n"+
-      "#cbws-tv-player-ui .cbws-player-primary{background:#a5fbec!important;}\n";
+      "#cbws-tv-player-ui .cbws-player-primary{background:#a5fbec!important;}\n"+
+      // TV Edition 1.6: media-player style OSD for embedded players.
+      "#cbws-tv-player-ui .cbws-player-bottom{padding:56px 4vw 30px!important;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-progress{display:flex;align-items:center;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-time{min-width:96px;font:600 20px Arial,Helvetica,sans-serif!important;color:#e9f0f6;text-align:center;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-bar{position:relative;flex:1;height:6px;margin:0 18px;border-radius:3px;background:rgba(255,255,255,.28);outline:none;transition:height .12s;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-bar.cbws-tv-focus{height:10px;box-shadow:0 0 0 4px rgba(165,251,236,.35)!important;outline:none!important;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:3px;background:#a5fbec;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-knob{position:absolute;top:50%;left:0;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.5);}\n"+
+      "#cbws-tv-player-ui .cbws-osd-row{display:flex;align-items:center;justify-content:space-between;margin-top:22px;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-group{display:flex;align-items:center;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-round{width:62px!important;height:62px!important;min-height:0!important;padding:0!important;border-radius:50%!important;font-size:24px!important;margin:0 8px!important;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-main{width:78px!important;height:78px!important;font-size:28px!important;background:#f4f8fb!important;color:#0b1421!important;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-picker{position:fixed;right:4vw;bottom:190px;min-width:320px;max-width:40vw;max-height:58vh;overflow-y:auto;z-index:2147483002;display:flex;flex-direction:column;padding:14px;border-radius:14px;background:rgba(14,22,32,.96);box-shadow:0 18px 50px rgba(0,0,0,.55);}\n"+
+      "#cbws-tv-player-ui .cbws-osd-picker-title{font:700 15px Arial,sans-serif;letter-spacing:2px;text-transform:uppercase;color:#9fb3c6;margin:2px 8px 10px;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-item{justify-content:flex-start!important;text-align:left!important;margin:3px 0!important;background:transparent!important;white-space:pre!important;}\n"+
+      "#cbws-tv-player-ui .cbws-osd-item.is-selected{color:#a5fbec!important;}\n";
     function element(tag, cls, value){
       var e=document.createElement(tag);
       if(cls)e.className=cls;
@@ -617,7 +633,7 @@
       add(footer,'span','','↑ ↓ ← →  Navigate     ·     OK  Select     ·     Back  Return');
       var info=window.__cbwsLoaderInfo,build='';
       if(info&&info.ref)build='  ·  '+String(info.ref).slice(0,7)+(info.via?' ('+info.via+')':'');
-      add(footer,'span','','TV EDITION  1.5.7'+build+'  /  CINEBY.WS');
+      add(footer,'span','','TV EDITION  1.6'+build+'  /  CINEBY.WS');
     }
     function pageLinks(currentPath) {
       var out=[], seen={};
@@ -930,26 +946,121 @@
         ['timeupdate','loadedmetadata','play','pause'].forEach(function(event){el.addEventListener(event,updateStatus);theatre.listeners.push([event,updateStatus]);});
         updateStatus();
       }else{
-        var row=add(bottom,'div','cbws-player-controls');
-        button(row,'cbws-player-button','↶ 10 s',function(){playerMedia('rewind');});
-        button(row,'cbws-player-button','⏯',function(){playerMedia('toggle');});
-        button(row,'cbws-player-button','10 s ↷',function(){playerMedia('forward');});
-        defaultPlayerFocus=button(row,'cbws-player-button cbws-player-primary','⚙  Quality · Subtitles',function(){enterFrame(el);});
-        theatre.controlsButton=defaultPlayerFocus;
-        // Ask the player frame whether its helper runs (again after each load).
-        var ping=function(){post(el,{cbws:'ping'});};
-        ping();el.addEventListener('load',ping);theatre.listeners.push(['load',ping]);
-        setTimeout(ping,1500);
-        setTimeout(function(){if(theatre&&theatre.media===el&&!helperIn(el)&&theatre.controlsButton)theatre.controlsButton.textContent='⚙  Player (no remote)';},5000);
-        if(serverTabs().length>1){
-          var serverButton=button(row,'cbws-player-button',serverLabel(),function(){nextServer();serverButton.textContent=serverLabel();});
-        }
-        button(row,'cbws-player-button','Original page',closeTheatre);
-        add(bottom,'p','cbws-player-note','◀ ▶ seek 10 s and OK pauses while this panel is hidden. ⚙ opens the player’s menu: quality, subtitles. Back returns here, then to the title.');
+        buildOsd(el,bottom);
+        defaultPlayerFocus=theatre.osd.toggle;
       }
       document.body.appendChild(playerUI);
       clearFocus();if(defaultPlayerFocus)setActive(defaultPlayerFocus,false);else ensureActive();
       wakePlayer();
+    }
+    // On-screen display for an embedded player, laid out like a TV media
+    // player: progress bar with times, transport buttons, then subtitles,
+    // quality, server and the player's own menu. The video stays in the
+    // source's player; embed.js reports its position and runs the commands.
+    function osdTime(seconds){
+      if(!isFinite(seconds)||seconds<0)seconds=0;
+      seconds=Math.floor(seconds);
+      var h=Math.floor(seconds/3600),m=Math.floor(seconds%3600/60),s=seconds%60;
+      return (h?h+':'+(m<10?'0':''):'')+m+':'+(s<10?'0':'')+s;
+    }
+    function osdCommand(op,extra){
+      if(!theatre||theatre.media.tagName!=='IFRAME')return false;
+      var el=theatre.media;
+      if(!helperIn(el)){hint('This player does not support the remote here · try another server');return false;}
+      var data={cbws:'cmd',op:op};
+      if(extra)for(var k in extra)if(Object.prototype.hasOwnProperty.call(extra,k))data[k]=extra[k];
+      post(el,data);
+      return true;
+    }
+    function buildOsd(el,bottom){
+      var osd=theatre.osd={status:{t:0,d:0,paused:true},picker:null};
+      var progress=add(bottom,'div','cbws-osd-progress');
+      osd.time=add(progress,'span','cbws-osd-time','0:00');
+      var bar=add(progress,'div','cbws-osd-bar');
+      bar.setAttribute('tabindex','0');bar.setAttribute('role','slider');bar.setAttribute('aria-label','Playback position');
+      osd.fill=add(bar,'div','cbws-osd-fill');
+      osd.knob=add(bar,'div','cbws-osd-knob');
+      bar.addEventListener('click',function(){osdCommand('toggle');});
+      osd.bar=bar;
+      osd.remaining=add(progress,'span','cbws-osd-time','0:00');
+      var row=add(bottom,'div','cbws-osd-row');
+      var left=add(row,'div','cbws-osd-group');
+      button(left,'cbws-player-button cbws-osd-round','⏪',function(){osdCommand('seekBy',{s:-10});hint('⏪  −10 s');});
+      osd.toggle=button(left,'cbws-player-button cbws-osd-round cbws-osd-main','▶',function(){osdCommand('toggle');});
+      button(left,'cbws-player-button cbws-osd-round','⏩',function(){osdCommand('seekBy',{s:10});hint('⏩  +10 s');});
+      var right=add(row,'div','cbws-osd-group');
+      button(right,'cbws-player-button','CC  Subtitles',function(){openPicker('subs');});
+      button(right,'cbws-player-button','⚙  Quality',function(){openPicker('quality');});
+      if(serverTabs().length>1){
+        var serverButton=button(right,'cbws-player-button',serverLabel(),function(){nextServer();serverButton.textContent=serverLabel();});
+      }
+      osd.menu=button(right,'cbws-player-button cbws-player-primary','☰  Player menu',function(){enterFrame(el);});
+      theatre.controlsButton=osd.menu;
+      // Ask the player frame whether its helper runs (again after each load),
+      // and keep the source's own control bar hidden while this OSD shows.
+      var ping=function(){post(el,{cbws:'ping'});post(el,{cbws:'cmd',op:'osd',on:true});};
+      ping();el.addEventListener('load',ping);theatre.listeners.push(['load',ping]);
+      setTimeout(ping,1500);
+      setTimeout(function(){if(theatre&&theatre.media===el&&!helperIn(el)&&theatre.controlsButton)theatre.controlsButton.textContent='☰  Player (no remote)';},5000);
+    }
+    function osdStatus(data){
+      var osd=theatre&&theatre.osd;
+      if(!osd)return;
+      osd.status={t:+data.t||0,d:+data.d||0,paused:!!data.paused};
+      var t=osd.status.t,d=osd.status.d,pct=d>0?Math.max(0,Math.min(100,t/d*100)):0;
+      osd.time.textContent=osdTime(t);
+      osd.remaining.textContent=d>0?'−'+osdTime(d-t):'--:--';
+      osd.fill.style.width=pct+'%';osd.knob.style.left=pct+'%';
+      osd.toggle.textContent=data.buffering?'…':osd.status.paused?'▶':'❚❚';
+    }
+    function closePicker(){
+      var osd=theatre&&theatre.osd;
+      if(!osd||!osd.picker)return false;
+      var back=osd.picker.opener;
+      if(osd.picker.node.parentNode)osd.picker.node.parentNode.removeChild(osd.picker.node);
+      osd.picker=null;
+      clearFocus();if(back)setActive(back,false);
+      return true;
+    }
+    function openPicker(kind){
+      var osd=theatre&&theatre.osd;
+      if(!osd)return;
+      closePicker();
+      if(!osdCommand('tracks'))return;
+      osd.pending={kind:kind,opener:active};
+      osd.pendingTimer=setTimeout(function(){if(theatre&&theatre.osd&&theatre.osd.pending){theatre.osd.pending=null;hint('The player did not answer · try ☰ Player menu');}},2000);
+    }
+    function osdTracks(data){
+      var osd=theatre&&theatre.osd;
+      if(!osd||!osd.pending)return;
+      var kind=osd.pending.kind,opener=osd.pending.opener;
+      osd.pending=null;if(osd.pendingTimer){clearTimeout(osd.pendingTimer);osd.pendingTimer=0;}
+      var items=kind==='subs'?data.subs:data.quality,current=kind==='subs'?data.sub:data.q;
+      if(!items||!items.length){
+        hint(kind==='subs'?'No subtitles on this server · try another server':'This server chooses the quality itself · see ☰ Player menu');
+        return;
+      }
+      var node=add(playerUI,'div','cbws-osd-picker');
+      add(node,'div','cbws-osd-picker-title',kind==='subs'?'Subtitles':'Quality');
+      var focusItem=null;
+      for(var i=0;i<items.length&&i<30;i++)(function(item){
+        var selected=item.id===current;
+        var b=button(node,'cbws-player-button cbws-osd-item'+(selected?' is-selected':''),(selected?'✓  ':'     ')+item.label,function(){
+          osdCommand(kind==='subs'?'setSub':'setQuality',{id:item.id});
+          hint((kind==='subs'?'Subtitles: ':'Quality: ')+item.label);
+          closePicker();
+        });
+        if(selected||!focusItem)focusItem=selected?b:focusItem||b;
+      })(items[i]);
+      osd.picker={node:node,opener:opener};
+      clearFocus();setActive(focusItem,true);
+    }
+    function osdBarKey(direction,el){
+      var osd=theatre&&theatre.osd;
+      if(!osd||el!==osd.bar||(direction!=='left'&&direction!=='right'))return false;
+      osdCommand('seekBy',{s:direction==='left'?-10:10});
+      hint(direction==='left'?'⏪  −10 s':'⏩  +10 s');
+      return true;
     }
     // The overlay fades after a few seconds, like a TV streaming app. Any
     // remote key shows it again; the first press only reveals it.
@@ -960,6 +1071,7 @@
         if(!theatre||!playerUI)return;
         theatre.idleTimer=0;
         if(theatre.media.tagName==='VIDEO'&&theatre.media.paused){scheduleIdle();return;}
+        if(theatre.osd&&(theatre.osd.picker||theatre.osd.status.paused)){scheduleIdle();return;}
         theatre.idle=true;playerUI.classList.add('cbws-player-idle');
       },4500);
     }
@@ -971,7 +1083,11 @@
       var el=theatre.media;
       var label=action==='forward'?'⏩  +10 s':action==='rewind'?'⏪  −10 s':'⏯';
       if(el.tagName==='VIDEO'){media(action);}
-      else if(helperIn(el)){post(el,{cbws:'key',action:action});}
+      else if(helperIn(el)){
+        if(action==='forward'||action==='rewind')post(el,{cbws:'cmd',op:'seekBy',s:action==='forward'?10:-10});
+        else if(action==='toggle')post(el,{cbws:'cmd',op:'toggle'});
+        else post(el,{cbws:'key',action:action});
+      }
       else{hint('This player does not support the remote here · try another server');return true;}
       hint(label);
       return true;
@@ -1082,6 +1198,7 @@
     }
     function indexOfNode(list,el){for(var i=0;i<list.length;i++)if(list[i]===el)return i;return -1;}
     function moveLayout(direction,el){
+      if(osdBarKey(direction,el))return true;
       if(!root||!root.contains(el))return false;
       var side=closestClass(el,'cbws-masthead');
       if(side){
@@ -1145,6 +1262,7 @@
       suppressed='';removeModeButton();removePlayerModeButton();update();ensureActive();return true;
     }
     function navigateBack(){
+      if(closePicker())return true;
       if(theatre||(isTitlePath(window.location.pathname)&&(suppressed===window.location.href||playSession)))return restoreDetail();
       stopPlayerWait();playSession=null;
       if(suppressed===window.location.href){suppressed='';removeModeButton();removePlayerModeButton();update();ensureActive();return true;}
@@ -1288,20 +1406,23 @@
     // Messages from embed.js running inside a player frame of this page.
     function onFrameMessage(event){
       var data=event&&event.data;
-      if(!data||typeof data!=='object'||(data.cbws!=='embed-ready'&&data.cbws!=='exit'&&data.cbws!=='blocked'&&data.cbws!=='ack'))return;
+      if(!data||typeof data!=='object'||!/^(embed-ready|exit|blocked|ack|status|tracks)$/.test(String(data.cbws)))return;
       var frames=document.querySelectorAll('iframe'),frame=null;
       for(var i=0;i<frames.length;i++)if(frames[i].contentWindow===event.source){frame=frames[i];break;}
       if(!frame)return;
       if(data.cbws==='blocked'){hint('Pop-up blocked');return;}
       if(data.cbws==='ack'){if(frame===controlFrame&&ackTimer){clearTimeout(ackTimer);ackTimer=0;}return;}
+      if(data.cbws==='status'){if(theatre&&theatre.media===frame)osdStatus(data);return;}
+      if(data.cbws==='tracks'){if(theatre&&theatre.media===frame)osdTracks(data);return;}
       if(data.cbws==='embed-ready'){
         if(!helperIn(frame))helperFrames.push(frame.contentWindow);
         if(document.activeElement===frame&&frameTimer){clearTimeout(frameTimer);frameTimer=0;}
-        if(theatre&&theatre.media===frame&&theatre.controlsButton)theatre.controlsButton.textContent='⚙  Quality · Subtitles';
+        if(theatre&&theatre.media===frame&&theatre.controlsButton)theatre.controlsButton.textContent='☰  Player menu';
         return;
       }
       // Return pressed in the player with no menu open: back to our overlay.
       stopControl(true);
+      if(theatre&&theatre.osd)post(frame,{cbws:'cmd',op:'osd',on:true});
     }
     // cineby.ws has fixed ids for its player: #player (section), #playerPlayBtn
     // (big play button over the poster) and #video-player (the embed iframe).

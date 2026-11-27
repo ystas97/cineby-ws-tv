@@ -464,6 +464,110 @@
       try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (ignore) {}
       try { window.parent.postMessage({cbws: 'exit'}, '*'); } catch (ignore) {}
     }
+    // ---- Player API for the page's own on-screen display (OSD) ----------
+    function jwApi() {
+      try {
+        if (typeof window.jwplayer !== 'function') return null;
+        var p = window.jwplayer();
+        return p && typeof p.getPosition === 'function' ? p : null;
+      } catch (ignore) { return null; }
+    }
+    function childFrames() { return document.querySelectorAll('iframe'); }
+    function toChildren(data) {
+      var frames = childFrames();
+      for (var f = 0; f < frames.length; f++) post(frames[f].contentWindow, data);
+      return frames.length > 0;
+    }
+    function status() {
+      var v = video();
+      if (!v) return null;
+      var jw = jwApi(), t = v.currentTime, d = v.duration, paused = v.paused, buffering = v.readyState < 3 && !v.paused;
+      if (jw) {
+        try { t = jw.getPosition(); d = jw.getDuration(); var st = jw.getState(); paused = st !== 'playing' && st !== 'buffering'; buffering = st === 'buffering'; } catch (ignore) {}
+      }
+      return {cbws: 'status', t: isFinite(t) ? t : 0, d: isFinite(d) ? d : 0, paused: !!paused, buffering: !!buffering};
+    }
+    function reportStatus() {
+      if (window.parent === window) return;
+      var s = status();
+      if (s) post(window.parent, s);
+    }
+    function textTracks(v) {
+      var out = [], list = v && v.textTracks ? v.textTracks : [];
+      for (var i = 0; i < list.length; i++) {
+        var k = list[i].kind;
+        if (k === 'subtitles' || k === 'captions') out.push(list[i]);
+      }
+      return out;
+    }
+    function tracks() {
+      var v = video();
+      if (!v) return null;
+      var jw = jwApi(), quality = [], q = -1, subs = [], sub = -1, i;
+      if (jw) {
+        try {
+          var levels = jw.getQualityLevels() || [];
+          for (i = 0; i < levels.length; i++) quality.push({id: i, label: String(levels[i].label || levels[i].height || i)});
+          q = jw.getCurrentQuality();
+          var caps = jw.getCaptionsList() || [];
+          for (i = 0; i < caps.length; i++) subs.push({id: i, label: String(caps[i].label || caps[i].name || (i ? 'Track ' + i : 'Off'))});
+          sub = jw.getCurrentCaptions();
+        } catch (ignore) {}
+      } else {
+        var list = textTracks(v);
+        subs.push({id: -1, label: 'Off'});
+        for (i = 0; i < list.length; i++) {
+          subs.push({id: i, label: String(list[i].label || list[i].language || 'Track ' + (i + 1))});
+          if (list[i].mode === 'showing') sub = i;
+        }
+        if (subs.length === 1) subs = [];
+      }
+      return {cbws: 'tracks', quality: quality, q: q, subs: subs, sub: sub};
+    }
+    function setQuality(id) {
+      var jw = jwApi();
+      if (jw) { try { jw.setCurrentQuality(id); } catch (ignore) {} }
+    }
+    function setSub(id) {
+      var jw = jwApi();
+      if (jw) { try { jw.setCurrentCaptions(id); } catch (ignore) {} return; }
+      var list = textTracks(video());
+      for (var i = 0; i < list.length; i++) list[i].mode = i === id ? 'showing' : 'disabled';
+    }
+    function seekTo(t) {
+      var v = video();
+      if (!v) return;
+      var d = v.duration;
+      t = Math.max(0, isFinite(d) ? Math.min(t, d - 1) : t);
+      var jw = jwApi();
+      try { if (jw) jw.seek(t); else v.currentTime = t; } catch (ignore) {}
+    }
+    // While the page shows its own OSD, JW Player's control bar stays hidden
+    // (its captions stay visible). Opening the player's menu shows it again.
+    function setOsd(on) {
+      var html = document.documentElement;
+      if (!html || !html.classList) return;
+      if (!osdStyle) {
+        osdStyle = document.createElement('style');
+        osdStyle.textContent = 'html.cbws-osd .jw-controls,html.cbws-osd .jw-display,html.cbws-osd .jw-controlbar{opacity:0!important;pointer-events:none!important;}';
+        (document.head || html).appendChild(osdStyle);
+      }
+      if (on) html.classList.add('cbws-osd'); else html.classList.remove('cbws-osd');
+    }
+    var osdStyle = null;
+    function command(data) {
+      if (!video()) { toChildren(data); return; }
+      var op = data.op;
+      if (op === 'tracks') { var tr = tracks(); if (tr) post(window.parent, tr); }
+      else if (op === 'seekTo' && typeof data.t === 'number') seekTo(data.t);
+      else if (op === 'seekBy' && typeof data.s === 'number') { var st = status(); if (st) seekTo(st.t + data.s); }
+      else if (op === 'toggle') media('toggle');
+      else if (op === 'setQuality' && typeof data.id === 'number') setQuality(data.id);
+      else if (op === 'setSub' && typeof data.id === 'number') setSub(data.id);
+      else if (op === 'osd') setOsd(!!data.on);
+      if (op !== 'tracks' && op !== 'osd') window.setTimeout(reportStatus, 150);
+    }
+
     // Play/pause and ±10 s on the player's own video. JW Player is driven
     // through its API so its interface stays in sync. With no video in this
     // document (the real player sits in a nested frame), pass it down.
@@ -555,7 +659,8 @@
       }
       if (event.source === window.parent && window.parent !== window) {
         if (data.cbws === 'ping') { post(window.parent, {cbws: 'embed-ready'}); return; }
-        if (data.cbws === 'control') { child = null; onFocus(); return; }
+        if (data.cbws === 'control') { child = null; setOsd(false); toChildren({cbws: 'cmd', op: 'osd', on: false}); onFocus(); return; }
+        if (data.cbws === 'cmd' && typeof data.op === 'string') { command(data); return; }
         if (data.cbws === 'key' && ACTIONS.test(String(data.action))) {
           post(window.parent, {cbws: 'ack'});
           run(data.action);
@@ -564,6 +669,11 @@
       }
       var frame = frameOf(event.source);
       if (!frame) return;
+      // The real player sits in a nested frame: pass its reports up.
+      if ((data.cbws === 'status' || data.cbws === 'tracks') && window.parent !== window && !video()) {
+        post(window.parent, data);
+        return;
+      }
       if (data.cbws === 'ack' && frame === child) {
         if (childTimer) { window.clearTimeout(childTimer); childTimer = 0; }
         return;
@@ -587,6 +697,7 @@
       window.addEventListener('keydown', onKey, true);
       window.addEventListener('message', onMessage);
       window.addEventListener('focus', onFocus);
+      window.setInterval(reportStatus, 500);
       try { window.parent.postMessage({cbws: 'embed-ready'}, '*'); } catch (ignore) {}
     }
     return {start: start, move: move, activate: activate, back: back, onKey: onKey, getActive: function () { return active; }};
