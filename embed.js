@@ -494,7 +494,10 @@
     function onMessage(event) {
       var data = event.data;
       if (data && data.cbws === 'blocked') {
-        try { window.parent.postMessage({cbws: 'blocked'}, '*'); } catch (ignore) {}
+        // Relay from a nested player frame up to the cineby page, never to ourselves.
+        if (event.source !== window && window.parent !== window) {
+          try { window.parent.postMessage({cbws: 'blocked'}, '*'); } catch (ignore) {}
+        }
         return;
       }
       if (!data || data.cbws !== 'exit') return;
@@ -536,7 +539,7 @@
   if (window.top === window.self && !window.__cbwsEmbedTest) return;
   window.__cinebyWsEmbed = true;
   installPopupGuard(window, document, function (url) { return url.origin === window.location.origin; }, function () {
-    try { window.parent.postMessage({cbws: 'blocked'}, '*'); } catch (ignore) {}
+    if (window.parent !== window) { try { window.parent.postMessage({cbws: 'blocked'}, '*'); } catch (ignore) {} }
   });
   var remote = createEmbedRemote(window, document);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', remote.start);
