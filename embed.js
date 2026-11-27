@@ -163,6 +163,8 @@
     }
     function ensureActive() {
       if (active && isVisible(active)) return true;
+      if (active && active.classList) active.classList.remove(FOCUS);
+      active = null;
       return setActive(defaultTarget());
     }
     function move(direction) {
@@ -192,7 +194,12 @@
           var first = defaultTarget();
           if (first) setActive(first);
         } else if (!isVisible(el)) {
-          active = null; ensureActive();
+          // The choice closed its menu (e.g. a quality was picked): go back
+          // to the button that opened it.
+          if (el.classList) el.classList.remove(FOCUS);
+          active = null;
+          if (!visibleMenu() && opener && isVisible(opener)) { setActive(opener); opener = null; }
+          else ensureActive();
         }
       }, 80);
     }
@@ -206,7 +213,7 @@
       window.setTimeout(function () {
         if (isVisible(menu) && opener && isVisible(opener)) press(opener);
         if (opener && isVisible(opener)) setActive(opener);
-        else { active = null; ensureActive(); }
+        else { if (active && active.classList) active.classList.remove(FOCUS); active = null; ensureActive(); }
         if (!visibleMenu()) opener = null;
       }, 60);
     }
