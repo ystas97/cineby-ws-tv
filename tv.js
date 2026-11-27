@@ -1041,7 +1041,8 @@
       var kind=osd.pending.kind,opener=osd.pending.opener;
       osd.pending=null;if(osd.pendingTimer){clearTimeout(osd.pendingTimer);osd.pendingTimer=0;}
       var items=kind==='subs'?data.subs:data.quality,current=kind==='subs'?data.sub:data.q;
-      if(!items||!items.length){
+      // A subtitle list with only "Off" means there are no subtitles.
+      if(!items||!items.length||(kind==='subs'&&items.length<2)){
         hint(kind==='subs'?'No subtitles on this server · try another server':'This server chooses the quality itself · see ☰ Player menu');
         return;
       }
