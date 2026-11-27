@@ -1,0 +1,23 @@
+{
+  "name": "cineby-ws-tv",
+  "version": "1.0.0",
+  "private": true,
+  "appName": "Cineby WS TV",
+  "description": "Remote-control accessibility adapter for cineby.ws on Samsung TizenBrew",
+  "packageType": "mods",
+  "websiteURL": "https://cineby.ws/",
+  "main": "remote.js",
+  "evaluateScriptOnDocumentStart": false,
+  "keys": [
+    "MediaPlayPause",
+    "MediaPlay",
+    "MediaPause",
+    "MediaStop",
+    "MediaFastForward",
+    "MediaRewind"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.cjs"
+  },
+  "license": "UNLICENSED"
+}
