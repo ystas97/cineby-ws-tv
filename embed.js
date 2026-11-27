@@ -266,7 +266,7 @@
           setActive(preferred(popupItems().length ? popupItems() : fresh));
           return;
         }
-        if (!wasInPopup && isVisible(el) && tries < 3) { window.setTimeout(settle, 180); return; }
+        if (!wasInPopup && isVisible(el) && tries < 7) { window.setTimeout(settle, 180); return; }
         if (wasInPopup && !popupItems().length) {
           // A choice closed its popup (e.g. subtitles picked).
           var back = popup.opener; popup = null;
