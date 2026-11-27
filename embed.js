@@ -123,6 +123,23 @@
         }
       }
     }
+    // Many players (JW Player among them) react to pointer events rather
+    // than to a bare click(), so press like a real mouse would.
+    function press(el) {
+      var r = el.getBoundingClientRect();
+      var o = {bubbles: true, cancelable: true, view: window, button: 0, buttons: 1,
+        clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2),
+        pointerId: 1, pointerType: 'mouse', isPrimary: true};
+      var types = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+      var sent = false;
+      for (var i = 0; i < types.length; i++) {
+        var pointer = types[i].indexOf('pointer') === 0;
+        var Ctor = pointer ? window.PointerEvent : window.MouseEvent;
+        if (typeof Ctor !== 'function') continue;
+        try { el.dispatchEvent(new Ctor(types[i], o)); if (types[i] === 'click') sent = true; } catch (ignore) {}
+      }
+      if (!sent) { try { el.click(); } catch (ignore) {} }
+    }
     function defaultTarget() {
       var menu = visibleMenu();
       var list = candidates(menu);
@@ -166,7 +183,7 @@
       if (active.tagName === 'IFRAME') { try { active.focus(); } catch (ignore) {} return; }
       if (active.tagName === 'VIDEO') { media('toggle'); return; }
       var before = visibleMenu(), el = active;
-      try { el.click(); } catch (ignore) {}
+      press(el);
       // Follow a menu that just opened (Settings → Quality → 720p …).
       window.setTimeout(function () {
         var after = visibleMenu();
@@ -187,7 +204,7 @@
         target.dispatchEvent(esc);
       } catch (ignore) {}
       window.setTimeout(function () {
-        if (isVisible(menu) && opener && isVisible(opener)) { try { opener.click(); } catch (ignore) {} }
+        if (isVisible(menu) && opener && isVisible(opener)) press(opener);
         if (opener && isVisible(opener)) setActive(opener);
         else { active = null; ensureActive(); }
         if (!visibleMenu()) opener = null;
